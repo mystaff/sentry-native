@@ -5,7 +5,7 @@
   <br />
 </p>
 
-# Time Doctor Fork of Sentry-Native
+# Time Doctor Fork of sentry-native
 
 - This contains Git Submodules. Clone with `git clone --recurse-submodules git@github.com:mystaff/sentry-native.git`
 - Make sure the latest version of CMake is installed
