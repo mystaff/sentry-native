@@ -5,6 +5,11 @@
   <br />
 </p>
 
+# Time Doctor Fork of Sentry-Native
+
+- This contains Git Submodules. Clone with `git clone --recurse-submodules git@github.com:mystaff/sentry-native.git`
+- Make sure the latest version of CMake is installed
+
 # Official Sentry SDK for C/C++ <!-- omit in toc -->
 
 The _Sentry Native SDK_ is an error and crash reporting client for native
@@ -23,15 +28,16 @@ Please see [Known Limitations](#known-limitations).
 
 ## Table of Contents <!-- omit in toc -->
 
-- [Downloads](#downloads)
-  - [What is Inside](#what-is-inside)
-- [Platform and Feature Support](#platform-and-feature-support)
-- [Building and Installation](#building-and-installation)
-  - [Compile-Time Options](#compile-time-options)
-  - [Build Targets](#build-targets)
-- [Runtime Configuration](#runtime-configuration)
-- [Known Limitations](#known-limitations)
-- [Development](#development)
+- [Time Doctor Fork of Sentry-Native](#time-doctor-fork-of-sentry-native)
+  - [Downloads](#downloads)
+    - [What is Inside](#what-is-inside)
+  - [Platform and Feature Support](#platform-and-feature-support)
+  - [Building and Installation](#building-and-installation)
+    - [Compile-Time Options](#compile-time-options)
+    - [Build Targets](#build-targets)
+  - [Runtime Configuration](#runtime-configuration)
+  - [Known Limitations](#known-limitations)
+  - [Development](#development)
 
 ## Downloads
 
