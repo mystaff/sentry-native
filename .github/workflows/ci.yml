@@ -24,14 +24,18 @@ jobs:
             os: ubuntu-20.04
             CC: gcc-10
             CXX: g++-10
+            SENTRY_BACKEND: breakpad
           - name: macOS (xcode)
             os: macOs-latest
             ERROR_ON_WARNINGS: 1
+            SENTRY_BACKEND: crashpad
           - name: Windows (VS2017, 32bit)
             os: vs2017-win2016
             TEST_X86: 1
+            SENTRY_BACKEND: breakpad
           - name: Windows (latest)
             os: windows-latest
+            SENTRY_BACKEND: breakpad
 
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
@@ -63,7 +67,7 @@ jobs:
         shell: bash
         run: |
           cmake --version
-          cmake -B build -DSENTRY_BUILD_SHARED_LIBS=OFF
-          cmake --build build --parallel
-          cmake --install build --prefix install
+          cmake -B build -DSENTRY_BUILD_SHARED_LIBS=OFF -DSENTRY_BACKEND=$SENTRY_BACKEND
+          cmake --build build --parallel --config Release
+          cmake --install build --prefix install --config Release
 
