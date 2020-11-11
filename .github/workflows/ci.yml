@@ -24,18 +24,22 @@ jobs:
             os: ubuntu-20.04
             CC: gcc-10
             CXX: g++-10
-            SENTRY_BACKEND: breakpad
+            env:
+              SENTRY_BACKEND: breakpad
           - name: macOS (xcode)
             os: macOs-latest
             ERROR_ON_WARNINGS: 1
-            SENTRY_BACKEND: crashpad
+            env:
+              SENTRY_BACKEND: crashpad
           - name: Windows (VS2017, 32bit)
             os: vs2017-win2016
             TEST_X86: 1
-            SENTRY_BACKEND: breakpad
+            env:
+              SENTRY_BACKEND: breakpad
           - name: Windows (latest)
             os: windows-latest
-            SENTRY_BACKEND: breakpad
+            env:
+              SENTRY_BACKEND: breakpad
 
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
