@@ -24,22 +24,14 @@ jobs:
             os: ubuntu-20.04
             CC: gcc-10
             CXX: g++-10
-            env:
-              SENTRY_BACKEND: breakpad
           - name: macOS (xcode)
             os: macOs-latest
             ERROR_ON_WARNINGS: 1
-            env:
-              SENTRY_BACKEND: crashpad
           - name: Windows (VS2017, 32bit)
             os: vs2017-win2016
             TEST_X86: 1
-            env:
-              SENTRY_BACKEND: breakpad
           - name: Windows (latest)
             os: windows-latest
-            env:
-              SENTRY_BACKEND: breakpad
 
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
@@ -67,11 +59,21 @@ jobs:
           sudo apt update
           sudo apt install gcc-multilib g++-multilib zlib1g-dev:i386 libssl-dev:i386 libcurl4-openssl-dev:i386
 
-      - name: Building
+      - name: Building w/ Breakpad
+        if: ${{ runner.os == 'Windows' || runner.os == 'Linux' }}
         shell: bash
         run: |
           cmake --version
-          cmake -B build -DSENTRY_BUILD_SHARED_LIBS=OFF -DSENTRY_BACKEND=$SENTRY_BACKEND
+          cmake -B build -DSENTRY_BUILD_SHARED_LIBS=OFF -DSENTRY_BACKEND=breakpad
+          cmake --build build --parallel --config Release
+          cmake --install build --prefix install --config Release
+
+      - name: Building w/ Crashpad
+        if: ${{ runner.os == 'macOS' }}
+        shell: bash
+        run: |
+          cmake --version
+          cmake -B build -DSENTRY_BUILD_SHARED_LIBS=OFF -DSENTRY_BACKEND=crashpad
           cmake --build build --parallel --config Release
           cmake --install build --prefix install --config Release
 
