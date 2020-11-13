@@ -9,6 +9,16 @@
 
 - This contains Git Submodules. Clone with `git clone --recurse-submodules git@github.com:mystaff/sentry-native.git`
 - Make sure the latest version of CMake is installed
+- CI Workflow is modified to make static builds specifically for TD
+
+To get updates from the original Sentry repo:
+```
+$ git remote add upstream git@github.com:getsentry/sentry-native.git
+$ git fetch upstream
+$ git checkout master
+$ git merge upstream/master
+$ git push
+```
 
 # Official Sentry SDK for C/C++ <!-- omit in toc -->
 
