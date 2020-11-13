@@ -132,8 +132,10 @@ jobs:
         run: |
           rm -rf ./release/include
           rm -rf ./debug/include
-          powershell Compress-Archive ./release sentry-native.zip
-          powershell Compress-Archive ./debug -Update sentry-native.zip
+          mv ./release/lib ./release/release
+          mv ./release ./lib
+          mv ./debug/lib ./lib/debug
+          powershell Compress-Archive ./lib sentry-native.zip
           powershell Compress-Archive ./include -Update sentry-native.zip
 
       - name: Zip Release (Unix)
