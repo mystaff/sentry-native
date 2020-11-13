@@ -130,8 +130,11 @@ jobs:
         if: ${{ runner.os == 'Windows' }}
         shell: bash
         run: |
+          rm -rf ./release/include
+          rm -rf ./debug/include
           powershell Compress-Archive ./release sentry-native.zip
           powershell Compress-Archive ./debug -Update sentry-native.zip
+          powershell Compress-Archive ./include -Update sentry-native.zip
 
       - name: Zip Release (Unix)
         if: ${{ runner.os == 'macOS' || runner.os == 'Linux' }}
