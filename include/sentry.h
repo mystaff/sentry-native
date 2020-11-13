@@ -24,7 +24,7 @@ extern "C" {
 
 /* SDK Version */
 #define SENTRY_SDK_NAME "sentry.native"
-#define SENTRY_SDK_VERSION "0.4.3"
+#define SENTRY_SDK_VERSION "0.4.4"
 #define SENTRY_SDK_USER_AGENT SENTRY_SDK_NAME "/" SENTRY_SDK_VERSION
 
 /* common platform detection */
@@ -729,6 +729,18 @@ SENTRY_API const char *sentry_options_get_ca_certs(
     const sentry_options_t *opts);
 
 /**
+ * Configures the name of the http transport thread.
+ */
+SENTRY_API void sentry_options_set_transport_thread_name(
+    sentry_options_t *opts, const char *name);
+
+/**
+ * Returns the configured http transport thread name.
+ */
+SENTRY_API const char *sentry_options_get_transport_thread_name(
+    const sentry_options_t *opts);
+
+/**
  * Enables or disables debug printing mode.
  */
 SENTRY_API void sentry_options_set_debug(sentry_options_t *opts, int debug);
@@ -912,6 +924,14 @@ SENTRY_API int sentry_init(sentry_options_t *options);
  * Returns 0 on success.
  */
 SENTRY_API int sentry_shutdown(void);
+
+/**
+ * This will lazily load and cache a list of all the loaded libraries.
+ *
+ * Returns a new reference to an immutable, frozen list.
+ * The reference must be released with `sentry_value_decref`.
+ */
+SENTRY_EXPERIMENTAL_API sentry_value_t sentry_get_modules_list(void);
 
 /**
  * Clears the internal module cache.

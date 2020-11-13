@@ -9,7 +9,6 @@
 #include "sentry_core.h"
 #include "sentry_database.h"
 #include "sentry_envelope.h"
-#include "sentry_modulefinder.h"
 #include "sentry_options.h"
 #include "sentry_path.h"
 #include "sentry_random.h"
@@ -197,7 +196,9 @@ sentry_shutdown(void)
             dumped_envelopes = sentry__transport_dump_queue(
                 options->transport, options->run);
         }
-        if (!dumped_envelopes) {
+        if (!dumped_envelopes
+            && (!options->backend
+                || !options->backend->can_capture_after_shutdown)) {
             sentry__run_clean(options->run);
         }
 
@@ -205,14 +206,8 @@ sentry_shutdown(void)
     }
 
     sentry__scope_cleanup();
-    sentry__modulefinder_cleanup();
+    sentry_clear_modulecache();
     return (int)dumped_envelopes;
-}
-
-void
-sentry_clear_modulecache(void)
-{
-    sentry__modulefinder_cleanup();
 }
 
 static void
