@@ -102,8 +102,10 @@ jobs:
           echo ARCH=$ARCH >> $GITHUB_ENV
           cmake --version
           cmake -B build -DSENTRY_BUILD_SHARED_LIBS=OFF -DSENTRY_BACKEND=breakpad -A $ARCH
-          cmake --build build --parallel --config Release
-          cmake --install build --prefix install --config Release
+          cmake --build build-release --parallel --config Release
+          cmake --install build-release --prefix release --config Release
+          cmake --build build-debug --parallel --config Debug
+          cmake --install build-debug --prefix debug --config Debug
 
       - name: Building (Linux)
         if: ${{ runner.os == 'Linux' }}
@@ -127,8 +129,8 @@ jobs:
         if: ${{ runner.os == 'Windows' }}
         shell: bash
         run: |
-          mv ./install ./release
           powershell Compress-Archive ./release sentry-native.zip
+          powershell Compress-Archive ./debug -Update sentry-native.zip
 
       - name: Zip Release (Unix)
         if: ${{ runner.os == 'macOS' || runner.os == 'Linux' }}
