@@ -609,8 +609,8 @@ SENTRY_API sentry_transport_t *sentry_new_function_transport(
  * response data.
  */
 SENTRY_API sentry_transport_t *sentry_new_qt_transport(
-    void (*func)(
-        const char *url, const char *body, const char *headers, void *data),
+    void (*func)(const char *url, const char *body, const char *headers,
+        void *data, void *state),
     void *data);
 
 /**
@@ -618,7 +618,7 @@ SENTRY_API sentry_transport_t *sentry_new_qt_transport(
  * Pass the values of response headers: retry-after and x-sentry-rate-limits
  **/
 void sentry_qt_transport_process_response(
-    sentry_transport_t *transport, char *rate_limits, char *retry_after);
+    void *_state, char *rate_limits, char *retry_after);
 
 /* -- Options APIs -- */
 

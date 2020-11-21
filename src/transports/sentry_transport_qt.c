@@ -15,7 +15,8 @@
 typedef struct qt_transport_state_s {
     sentry_dsn_t *dsn;
     sentry_rate_limiter_t *ratelimiter;
-    void (*func)(const char *url, const char *body, const char *headers, void *data));
+    void (*func)(const char *url, const char *body, const char *headers,
+        void *data, void *state);
     void *data;
     bool debug;
 } qt_transport_state_t;
@@ -47,7 +48,7 @@ static int
 sentry__qt_transport_start(
     const sentry_options_t *options, void *transport_state)
 {
-    qt_transport_state_t *state = sentry__qt_transport_state_new();
+    qt_transport_state_t *state = (qt_transport_state_t *)transport_state;
 
     state->dsn = sentry__dsn_incref(options->dsn);
     state->debug = options->debug;
@@ -56,8 +57,10 @@ sentry__qt_transport_start(
 }
 
 static int
-sentry__qt_transport_shutdown(uint64_t timeout, void *transport_state)
+sentry__qt_transport_shutdown(
+    uint64_t UNUSED(timeout), void *UNUSED(transport_state))
 {
+    return 0;
 }
 
 static void
@@ -68,6 +71,7 @@ sentry__qt_transport_send_envelope(sentry_envelope_t *envelope, void *_state)
     sentry_prepared_http_request_t *req = sentry__prepare_http_request(
         envelope, state->dsn, state->ratelimiter);
     if (!req) {
+        sentry_envelope_free(envelope);
         return;
     }
 
@@ -83,23 +87,17 @@ sentry__qt_transport_send_envelope(sentry_envelope_t *envelope, void *_state)
         }
     }
 
-    state->func(req->url, req->body, buf, state->data);
+    state->func(req->url, req->body, buf, state->data, state);
 
-    curl_slist_free_all(headers);
-    sentry_free(info.retry_after);
-    sentry_free(info.x_sentry_rate_limits);
     sentry__prepared_http_request_free(req);
+    sentry_envelope_free(envelope);
 }
 
 void
 sentry_qt_transport_process_response(
-    sentry_transport_t *transport, char *rate_limits, char *retry_after)
+    void *_state, char *rate_limits, char *retry_after)
 {
-    if (!transport->running) {
-        return;
-    }
-
-    qt_transport_state_t *state = (qt_transport_state_t *)transport->state;
+    qt_transport_state_t *state = (qt_transport_state_t *)_state;
 
     if (rate_limits) {
         sentry__rate_limiter_update_from_header(
@@ -112,7 +110,7 @@ sentry_qt_transport_process_response(
 
 sentry_transport_t *
 sentry_new_qt_transport(void (*func)(const char *url, const char *body,
-                            const char *headers, void *data),
+                            const char *headers, void *data, void *state),
     void *data)
 {
     SENTRY_DEBUG("initializing qt transport");
