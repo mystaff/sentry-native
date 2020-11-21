@@ -595,6 +595,9 @@ SENTRY_API void sentry_transport_free(sentry_transport_t *transport);
 SENTRY_API sentry_transport_t *sentry_new_function_transport(
     void (*func)(const sentry_envelope_t *envelope, void *data), void *data);
 
+SENTRY_API sentry_transport_t *sentry_new_advanced_function_transport(
+    void (*func)(const sentry_envelope_t *envelope, void *data), void *data);
+
 /* -- Options APIs -- */
 
 /**
@@ -1059,6 +1062,57 @@ SENTRY_API void sentry_start_session(void);
  * Ends a session.
  */
 SENTRY_API void sentry_end_session(void);
+
+typedef struct sentry_rate_limiter_s sentry_rate_limiter_t;
+
+/**
+ * This is the internal representation of a parsed DSN.
+ */
+typedef struct sentry_dsn_s {
+    char *raw;
+    char *host;
+    char *path;
+    char *secret_key;
+    char *public_key;
+    uint64_t project_id;
+    int port;
+    long refcount;
+    bool is_valid;
+    bool is_secure;
+} sentry_dsn_t;
+
+typedef struct sentry_prepared_http_header_s {
+    const char *key;
+    char *value;
+} sentry_prepared_http_header_t;
+
+/**
+ * This represents a HTTP request, with method, url, headers and a body.
+ */
+typedef struct sentry_prepared_http_request_s {
+    const char *method;
+    char *url;
+    sentry_prepared_http_header_t *headers;
+    size_t headers_len;
+    char *body;
+    size_t body_len;
+    bool body_owned;
+} sentry_prepared_http_request_t;
+
+/**
+ * Consumes the given envelope and transforms it into into a prepared http
+ * request. This can return NULL when all the items in the envelope have been
+ * rate limited.
+ */
+SENTRY_API sentry_prepared_http_request_t *sentry__prepare_http_request(
+    sentry_envelope_t *envelope, const sentry_dsn_t *dsn,
+    const sentry_rate_limiter_t *rl);
+
+/**
+ * Free a previously allocated HTTP request.
+ */
+SENTRY_API void sentry__prepared_http_request_free(
+    sentry_prepared_http_request_t *req);
 
 #ifdef __cplusplus
 }
