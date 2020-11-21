@@ -595,6 +595,31 @@ SENTRY_API void sentry_transport_free(sentry_transport_t *transport);
 SENTRY_API sentry_transport_t *sentry_new_function_transport(
     void (*func)(const sentry_envelope_t *envelope, void *data), void *data);
 
+/**
+ * Create a new function transport tailored for QT usage (it abstracts the
+ * interface from sentry data structures). Unlike the function transport, this
+ * handles the rate_limiter and retry_after implementation.
+ *
+ * It is a convenience function which works with a borrowed `data`, and will
+ * automatically free the envelope, so the user provided function does not need
+ * to do that.
+ *
+ * This function assumes requests are async. Upon receiving the response, the
+ * `sentry_qt_transport_process_response` must be called with the appropriate
+ * response data.
+ */
+SENTRY_API sentry_transport_t *sentry_new_qt_transport(
+    void (*func)(const char *url, const char *body, const char *headers,
+        void *data, void *state),
+    void *data);
+
+/**
+ * To be used to report responses to the QT transport.
+ * Pass the values of response headers: retry-after and x-sentry-rate-limits
+ **/
+void sentry_qt_transport_process_response(
+    void *_state, char *rate_limits, char *retry_after);
+
 /* -- Options APIs -- */
 
 /**
