@@ -8,8 +8,6 @@
 #define SENTRY_RL_CATEGORY_SESSION 2
 #define SENTRY_RL_CATEGORY_TRANSACTION 3
 
-typedef struct sentry_rate_limiter_s sentry_rate_limiter_t;
-
 /**
  * This will create a new rate limiter.
  */

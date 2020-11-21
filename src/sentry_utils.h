@@ -37,22 +37,6 @@ int sentry__url_parse(sentry_url_t *url_out, const char *url);
 void sentry__url_cleanup(sentry_url_t *url);
 
 /**
- * This is the internal representation of a parsed DSN.
- */
-typedef struct sentry_dsn_s {
-    char *raw;
-    char *host;
-    char *path;
-    char *secret_key;
-    char *public_key;
-    uint64_t project_id;
-    int port;
-    long refcount;
-    bool is_valid;
-    bool is_secure;
-} sentry_dsn_t;
-
-/**
  * This will parse the DSN URL given in `dsn`.
  *
  * The returned `sentry_dsn_t` will have have its `is_valid` flag set when the
