@@ -11,7 +11,6 @@
 #define SENTRY_MAX_ENVELOPE_ITEMS 10
 
 typedef struct sentry_envelope_item_s sentry_envelope_item_t;
-typedef struct sentry_rate_limiter_s sentry_rate_limiter_t;
 
 /**
  * Create a new empty envelope.

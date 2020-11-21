@@ -1063,6 +1063,24 @@ SENTRY_API void sentry_start_session(void);
  */
 SENTRY_API void sentry_end_session(void);
 
+typedef struct sentry_rate_limiter_s sentry_rate_limiter_t;
+
+/**
+ * This is the internal representation of a parsed DSN.
+ */
+typedef struct sentry_dsn_s {
+    char *raw;
+    char *host;
+    char *path;
+    char *secret_key;
+    char *public_key;
+    uint64_t project_id;
+    int port;
+    long refcount;
+    bool is_valid;
+    bool is_secure;
+} sentry_dsn_t;
+
 typedef struct sentry_prepared_http_header_s {
     const char *key;
     char *value;

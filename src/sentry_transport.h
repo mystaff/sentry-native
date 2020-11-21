@@ -5,7 +5,6 @@
 
 typedef struct sentry_dsn_s sentry_dsn_t;
 typedef struct sentry_run_s sentry_run_t;
-typedef struct sentry_rate_limiter_s sentry_rate_limiter_t;
 
 /**
  * Sets the dump function of the transport.
