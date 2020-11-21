@@ -34,6 +34,5 @@
 #endif
 
 #include <sentry.h>
-#include <stdbool.h>
 
 #endif
