@@ -15,8 +15,8 @@
 typedef struct qt_transport_state_s {
     sentry_dsn_t *dsn;
     sentry_rate_limiter_t *ratelimiter;
-    void (*func)(const char *url, const char *body, const char *headers,
-        void *data, void *state);
+    void (*func)(const char *url, const char *body, const long bodyLen,
+        const char *headers, void *data, void *state);
     void *data;
     bool debug;
 } qt_transport_state_t;
@@ -87,7 +87,7 @@ sentry__qt_transport_send_envelope(sentry_envelope_t *envelope, void *_state)
         }
     }
 
-    state->func(req->url, req->body, buf, state->data, state);
+    state->func(req->url, req->body, req->body_len, buf, state->data, state);
 
     sentry__prepared_http_request_free(req);
     sentry_envelope_free(envelope);
@@ -109,8 +109,9 @@ sentry_qt_transport_process_response(
 }
 
 sentry_transport_t *
-sentry_new_qt_transport(void (*func)(const char *url, const char *body,
-                            const char *headers, void *data, void *state),
+sentry_new_qt_transport(
+    void (*func)(const char *url, const char *body, const long bodyLen,
+        const char *headers, void *data, void *state),
     void *data)
 {
     SENTRY_DEBUG("initializing qt transport");
