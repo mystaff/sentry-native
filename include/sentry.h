@@ -609,8 +609,8 @@ SENTRY_API sentry_transport_t *sentry_new_function_transport(
  * response data.
  */
 SENTRY_API sentry_transport_t *sentry_new_qt_transport(
-    void (*func)(const char *url, const char *body, const char *headers,
-        void *data, void *state),
+    void (*func)(const char *url, const char *body, const long bodyLen,
+        const char *headers, void *data, void *state),
     void *data);
 
 /**
