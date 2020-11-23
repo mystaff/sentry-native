@@ -82,7 +82,7 @@ sentry__qt_transport_send_envelope(sentry_envelope_t *envelope, void *_state)
             snprintf(buf, sizeof(buf), "%s:%s", req->headers[i].key,
                 req->headers[i].value);
         } else {
-            snprintf(buf, sizeof(buf), "%s,%s:%s", buf, req->headers[i].key,
+            snprintf(buf, sizeof(buf), "%s\n%s:%s", buf, req->headers[i].key,
                 req->headers[i].value);
         }
     }
