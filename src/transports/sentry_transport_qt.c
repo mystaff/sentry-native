@@ -80,7 +80,7 @@ sentry__qt_transport_send_envelope(sentry_envelope_t *envelope, void *_state)
     int written = 0;
     for (size_t i = 0; i < req->headers_len && written < 2048; i++) {
         written += snprintf(buf + written, sizeof(buf) - written, "%s%s:%s",
-            req->headers[i].key, req->headers[i].value, i == 0 ? "" : "\n");
+            i == 0 ? "" : "\n", req->headers[i].key, req->headers[i].value);
         SENTRY_DEBUGF("sentry__qt_transport_send_envelope: written %s - %d",
             buf, written);
         if (written > 2048) {
