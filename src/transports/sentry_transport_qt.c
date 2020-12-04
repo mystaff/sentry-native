@@ -77,14 +77,12 @@ sentry__qt_transport_send_envelope(sentry_envelope_t *envelope, void *_state)
 
     char buf[2048];
     buf[0] = '\0';
+    int written = 0;
     for (size_t i = 0; i < req->headers_len; i++) {
-        if (i == 0) {
-            snprintf(buf, sizeof(buf), "%s:%s", req->headers[i].key,
-                req->headers[i].value);
-        } else {
-            snprintf(buf, sizeof(buf), "%s\n%s:%s", buf, req->headers[i].key,
-                req->headers[i].value);
-        }
+        written += snprintf(buf + written, sizeof(buf) - written, "%s:%s",
+            req->headers[i].key, req->headers[i].value);
+        SENTRY_WARN(
+            "sentry__qt_transport_send_envelope: header buffer size exceeded");
     }
 
     state->func(req->url, req->body, req->body_len, buf, state->data, state);
