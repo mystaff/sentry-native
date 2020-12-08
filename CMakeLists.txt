@@ -7,6 +7,10 @@ else()
 	cmake_minimum_required (VERSION 3.10)
 endif()
 
+if(APPLE)
+  set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13")
+endif()
+
 project(Sentry-Native LANGUAGES C CXX ASM)
 
 set(SENTRY_MAIN_PROJECT OFF)
