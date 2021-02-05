@@ -4,6 +4,7 @@ if(WIN32)
 	# enables support for CMAKE_MSVC_RUNTIME_LIBRARY
 	cmake_policy(SET CMP0091 NEW)
 else()
+	# The Android tools ship with this ancient version, which we need to support.
 	cmake_minimum_required (VERSION 3.10)
 endif()
 
@@ -11,7 +12,17 @@ if(APPLE)
   set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum OS X deployment version" FORCE)
 endif()
 
-project(Sentry-Native LANGUAGES C CXX ASM)
+#read sentry-native version
+file(READ "include/sentry.h" _SENTRY_HEADER_CONTENT)
+string(REGEX MATCH "#define SENTRY_SDK_VERSION \"([0-9\.]+)\"" _SENTRY_VERSION_MATCH "${_SENTRY_HEADER_CONTENT}")
+set(SENTRY_VERSION "${CMAKE_MATCH_1}")
+unset(_SENTRY_HEADER_CONTENT)
+unset(_SENTRY_VERSION_MATCH)
+
+project(Sentry-Native
+	LANGUAGES C CXX ASM
+	VERSION ${SENTRY_VERSION}
+)
 
 set(SENTRY_MAIN_PROJECT OFF)
 if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
@@ -133,8 +144,8 @@ endif()
 if(SENTRY_BACKEND_CRASHPAD AND ANDROID)
 	message(FATAL_ERROR "The Crashpad backend is not currently supported on Android")
 endif()
-if(SENTRY_BACKEND_BREAKPAD AND NOT (LINUX OR WIN32))
-	message(FATAL_ERROR "The Breakpad backend is currently only supported on Linux and Windows")
+if(SENTRY_BACKEND_BREAKPAD AND ANDROID)
+	message(FATAL_ERROR "The Breakpad backend is not currently supported on Android")
 endif()
 
 message(STATUS "SENTRY_TRANSPORT=${SENTRY_TRANSPORT}")
@@ -343,9 +354,9 @@ if(LINUX)
 elseif(ANDROID)
 	target_link_libraries(sentry PRIVATE dl log)
 elseif(MSVC)
-	target_link_libraries(sentry PRIVATE dbghelp)
+	target_link_libraries(sentry PRIVATE dbghelp version)
 elseif(MINGW)
-	target_link_libraries(sentry PRIVATE dbghelp)
+	target_link_libraries(sentry PRIVATE dbghelp version)
 	target_compile_options(sentry PRIVATE
 		-Wno-unused-variable
 		-Wno-unused-parameter
@@ -406,6 +417,10 @@ if(SENTRY_BACKEND_CRASHPAD)
 		install(EXPORT crashpad_export NAMESPACE sentry_crashpad:: FILE sentry_crashpad-targets.cmake
 			DESTINATION "${CMAKE_INSTALL_CMAKEDIR}"
 		)
+		if(WIN32 AND MSVC)
+			sentry_install(FILES $<TARGET_PDB_FILE:crashpad_handler>
+				DESTINATION "${CMAKE_INSTALL_BINDIR}" OPTIONAL)
+		endif()
 	endif()
 	add_dependencies(sentry crashpad::handler)
 elseif(SENTRY_BACKEND_BREAKPAD)
@@ -434,9 +449,22 @@ elseif(SENTRY_BACKEND_INPROC)
 	target_compile_definitions(sentry PRIVATE SENTRY_WITH_INPROC_BACKEND)
 endif()
 
+option(SENTRY_INTEGRATION_QT "Build Qt integration")
+if(SENTRY_INTEGRATION_QT)
+	find_package(Qt5 COMPONENTS Core REQUIRED)
+	target_link_libraries(sentry PRIVATE Qt5::Core)
+endif()
+
 include(CMakePackageConfigHelpers)
 configure_package_config_file(sentry-config.cmake.in sentry-config.cmake
 	INSTALL_DESTINATION "${CMAKE_INSTALL_CMAKEDIR}")
+
+# generate package version file
+# We would have liked to use `SameMinorVersion`, but that is only supported on
+# CMake >= 3.11.
+write_basic_package_version_file(sentry-config-version.cmake
+	VERSION ${SENTRY_VERSION}
+	COMPATIBILITY SameMajorVersion)
 
 sentry_install(TARGETS sentry EXPORT sentry
 	ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
@@ -446,8 +474,15 @@ sentry_install(TARGETS sentry EXPORT sentry
 )
 sentry_install(EXPORT sentry NAMESPACE sentry:: FILE sentry-targets.cmake
 	DESTINATION "${CMAKE_INSTALL_CMAKEDIR}")
-sentry_install(FILES "${PROJECT_BINARY_DIR}/sentry-config.cmake"
+sentry_install(
+	FILES
+		"${PROJECT_BINARY_DIR}/sentry-config.cmake"
+		"${PROJECT_BINARY_DIR}/sentry-config-version.cmake"
 	DESTINATION "${CMAKE_INSTALL_CMAKEDIR}")
+if(WIN32 AND MSVC AND SENTRY_BUILD_SHARED_LIBS)
+	sentry_install(FILES $<TARGET_PDB_FILE:sentry>
+		DESTINATION "${CMAKE_INSTALL_BINDIR}" OPTIONAL)
+endif()
 
 # ===== tests =====
 

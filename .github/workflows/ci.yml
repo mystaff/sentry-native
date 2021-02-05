@@ -90,7 +90,7 @@ jobs:
         # workaround: https://github.com/actions/virtual-environments/issues/1536#issuecomment-698537248
         run: |
           sudo apt update
-          sudo apt install clang-10 clang-tools g++-10 libcurl4-openssl-dev
+          sudo apt install cmake clang-11 clang-tools g++-10 zlib1g-dev libcurl4-openssl-dev
 
       - name: Building (Windows)
         if: ${{ runner.os == 'Windows' }}

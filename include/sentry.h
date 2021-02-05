@@ -24,7 +24,7 @@ extern "C" {
 
 /* SDK Version */
 #define SENTRY_SDK_NAME "sentry.native"
-#define SENTRY_SDK_VERSION "0.4.4"
+#define SENTRY_SDK_VERSION "0.4.7"
 #define SENTRY_SDK_USER_AGENT SENTRY_SDK_NAME "/" SENTRY_SDK_VERSION
 
 /* common platform detection */
@@ -776,6 +776,20 @@ SENTRY_API void sentry_options_set_debug(sentry_options_t *opts, int debug);
 SENTRY_API int sentry_options_get_debug(const sentry_options_t *opts);
 
 /**
+ * Sets the number of breadcrumbs being tracked and attached to events.
+ *
+ * Defaults to 100.
+ */
+SENTRY_API void sentry_options_set_max_breadcrumbs(
+    sentry_options_t *opts, size_t max_breadcrumbs);
+
+/**
+ * Sets the number of breadcrumbs being tracked and attached to events.
+ */
+SENTRY_API size_t sentry_options_get_max_breadcrumbs(
+    const sentry_options_t *opts);
+
+/**
  * Type of the callback for logger function.
  */
 typedef void (*sentry_logger_function_t)(
@@ -968,6 +982,17 @@ SENTRY_EXPERIMENTAL_API sentry_value_t sentry_get_modules_list(void);
  * `sentry_capture_event` will have an up-to-date module list.
  */
 SENTRY_EXPERIMENTAL_API void sentry_clear_modulecache(void);
+
+/**
+ * Re-initializes the Sentry backend.
+ *
+ * This is needed if a third-party library overrides the previously installed
+ * signal handler. Calling this function can be potentially dangerous and should
+ * only be done when necessary.
+ *
+ * Returns 0 on success.
+ */
+SENTRY_EXPERIMENTAL_API int sentry_reinstall_backend(void);
 
 /**
  * Gives user consent.

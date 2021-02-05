@@ -19,6 +19,10 @@
 #include "sentry_transport.h"
 #include "sentry_value.h"
 
+#ifdef SENTRY_INTEGRATION_QT
+#    include "integrations/sentry_integration_qt.h"
+#endif
+
 static sentry_options_t *g_options = NULL;
 static sentry_mutex_t g_options_lock = SENTRY__MUTEX_INIT;
 
@@ -150,6 +154,11 @@ sentry_init(sentry_options_t *options)
         backend->user_consent_changed_func(backend);
     }
 
+#ifdef SENTRY_INTEGRATION_QT
+    SENTRY_TRACE("setting up Qt integration");
+    sentry_integration_setup_qt();
+#endif
+
     // after initializing the transport, we will submit all the unsent envelopes
     // and handle remaining sessions.
     sentry__process_old_runs(options, last_crash);
@@ -208,6 +217,25 @@ sentry_shutdown(void)
     sentry__scope_cleanup();
     sentry_clear_modulecache();
     return (int)dumped_envelopes;
+}
+
+int
+sentry_reinstall_backend(void)
+{
+    int rv = 0;
+    SENTRY_WITH_OPTIONS (options) {
+        sentry_backend_t *backend = options->backend;
+        if (backend && backend->shutdown_func) {
+            backend->shutdown_func(backend);
+        }
+
+        if (backend && backend->startup_func) {
+            if (backend->startup_func(backend, options)) {
+                rv = 1;
+            }
+        }
+    }
+    return rv;
 }
 
 static void
@@ -441,23 +469,20 @@ sentry_remove_user(void)
 void
 sentry_add_breadcrumb(sentry_value_t breadcrumb)
 {
-    sentry_value_incref(breadcrumb);
+    size_t max_breadcrumbs = SENTRY_BREADCRUMBS_MAX;
+    SENTRY_WITH_OPTIONS (options) {
+        if (options->backend && options->backend->add_breadcrumb_func) {
+            // the hook will *not* take ownership
+            options->backend->add_breadcrumb_func(options->backend, breadcrumb);
+        }
+        max_breadcrumbs = options->max_breadcrumbs;
+    }
+
     // the `no_flush` will avoid triggering *both* scope-change and
     // breadcrumb-add events.
     SENTRY_WITH_SCOPE_MUT_NO_FLUSH (scope) {
         sentry__value_append_bounded(
-            scope->breadcrumbs, breadcrumb, SENTRY_BREADCRUMBS_MAX);
-    }
-
-    bool was_added = false;
-    SENTRY_WITH_OPTIONS (options) {
-        if (options->backend && options->backend->add_breadcrumb_func) {
-            options->backend->add_breadcrumb_func(options->backend, breadcrumb);
-            was_added = true;
-        }
-    }
-    if (!was_added) {
-        sentry_value_decref(breadcrumb);
+            scope->breadcrumbs, breadcrumb, max_breadcrumbs);
     }
 }
 

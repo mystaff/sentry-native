@@ -6,7 +6,7 @@ import time
 import itertools
 import json
 from . import make_dsn, check_output, run, Envelope
-from .conditions import is_asan, has_http, has_breakpad, has_files
+from .conditions import has_http, has_breakpad, has_files
 from .assertions import (
     assert_attachment,
     assert_meta,
@@ -22,7 +22,7 @@ from .assertions import (
 pytestmark = pytest.mark.skipif(not has_http, reason="tests need http")
 
 auth_header = (
-    "Sentry sentry_key=uiaeosnrtdy, sentry_version=7, sentry_client=sentry.native/0.4.4"
+    "Sentry sentry_key=uiaeosnrtdy, sentry_version=7, sentry_client=sentry.native/0.4.7"
 )
 
 

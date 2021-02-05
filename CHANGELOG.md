@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.4.7
+
+**Features**:
+
+- Events will automatically get an `os` context with OS version information.
+- Added a new `max_breadcrumbs` option.
+
+**Fixes**:
+
+- Fixed some memory leaks related to bounded breadcrumbs.
+
+## 0.4.6
+
+**Fixes**:
+
+- Restore compatibility with CMake 3.10 (as used in Android NDK Tools)
+
+**Internal**:
+
+- Update Crashpad and Breakpad submodules to 2021-01-25
+
+## 0.4.5
+
+**Features**:
+
+- The Breakpad backend is now supported on macOS, although the crashpad backend is recommended on that platform.
+- Added a new `sentry_reinstall_backend` function which can be used in case a third-party library is overriding the signal/exception handler.
+- Add a Qt integration that hooks into Qt logging (opt-in CMake option).
+- Expose the sentry-native version via CMake.
+
+**Fixes**:
+
+- Install `.pdb` files correctly.
+- Improve macOS runtime version detection.
+- Fixed a potential segfault when doing concurrent scope modification.
+
+**Thank you**:
+
+Features, fixes and improvements in this release have been contributed by:
+
+- [@Mixaill](https://github.com/Mixaill)
+- [@eakoli](https://github.com/eakoli)
+- [@GenuineAster](https://github.com/GenuineAster)
+- [@daxpedda](https://github.com/daxpedda)
+- [@torarnv](https://github.com/torarnv)
+
 ## 0.4.4
 
 **Features**:

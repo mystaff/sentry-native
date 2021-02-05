@@ -16,6 +16,8 @@ sentry_target_sources_cwd(sentry
 	sentry_logger.h
 	sentry_options.c
 	sentry_options.h
+	sentry_os.c
+	sentry_os.h
 	sentry_path.h
 	sentry_random.c
 	sentry_random.h
@@ -135,5 +137,14 @@ if(WIN32)
 	target_compile_definitions(sentry PRIVATE SENTRY_WITH_UNWINDER_DBGHELP)
 	sentry_target_sources_cwd(sentry
 		unwinder/sentry_unwinder_dbghelp.c
+	)
+endif()
+
+# integrations
+if(SENTRY_INTEGRATION_QT)
+	target_compile_definitions(sentry PRIVATE SENTRY_INTEGRATION_QT)
+	sentry_target_sources_cwd(sentry
+		integrations/sentry_integration_qt.cpp
+		integrations/sentry_integration_qt.h
 	)
 endif()

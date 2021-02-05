@@ -108,11 +108,11 @@ Building the Crashpad Backend requires a `C++14` compatible compiler.
 
 ```sh
 # configure the cmake build into the `build` directory, with crashpad (on macOS)
-$ cmake -B build -DSENTRY_BACKEND=crashpad
+$ cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
 # build the project
 $ cmake --build build --parallel
 # install the resulting artifacts into a specific prefix (use the correct config on windows)
-$ cmake --install build --prefix install --config Debug
+$ cmake --install build --prefix install --config RelWithDebInfo
 # which will result in the following (on macOS):
 $ exa --tree install
 install
@@ -121,6 +121,8 @@ install
 ├── include
 │  └── sentry.h
 └── lib
+   ├── cmake
+   │  └── sentry
    ├── libsentry.dylib
    └── libsentry.dylib.dSYM
 ```
@@ -237,13 +239,16 @@ using `cmake -D BUILD_SHARED_LIBS=OFF ..`.
   Sentry can use different backends depending on platform.
 
   - **crashpad**: This uses the out-of-process crashpad handler. It is currently
-    only supported on Windows and macOS, and used as the default there.
+    only supported on Desktop OSs, and used as the default on Windows and macOS.
   - **breakpad**: This uses the in-process breakpad handler. It is currently
-    only supported on Linux and Windows, and used as the default on Linux.
+    only supported on Desktop OSs, and used as the default on Linux.
   - **inproc**: A small in-process handler which is supported on all platforms,
     and is used as default on Android.
   - **none**: This builds `sentry-native` without a backend, so it does not handle
     crashes at all. It is primarily used for tests.
+
+- `SENTRY_INTEGRATION_QT` (Default: OFF):
+  Builds the Qt integration, which turns Qt log messages into breadcrumbs.
 
 - `SENTRY_BREAKPAD_SYSTEM` / `SENTRY_CRASHPAD_SYSTEM` (Default: OFF):
   This instructs the build system to use system-installed breakpad or crashpad
@@ -262,7 +267,7 @@ using `cmake -D BUILD_SHARED_LIBS=OFF ..`.
 | Backends   |         |       |       |         |
 | - inproc   | ✓       | ✓     | ✓     | ☑       |
 | - crashpad | ☑       | ☑     | ✓     |         |
-| - breakpad | ✓       |       | ☑     |         |
+| - breakpad | ✓       | ✓     | ☑     |         |
 | - none     | ✓       | ✓     | ✓     | ✓       |
 
 Legend:
