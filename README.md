@@ -205,7 +205,7 @@ using `cmake -D BUILD_SHARED_LIBS=OFF ..`.
   Enables linking with the static MSVC runtime. Has no effect if the compiler is not MSVC.
 
 - `SENTRY_LINK_PTHREAD` (Default: ON):
-  Links to the `pthread` library on unix targets.
+  Links platform threads library like `pthread` on unix targets.
 
 - `SENTRY_BUILD_FORCE32` (Default: OFF):
   Forces cross-compilation from 64-bit host to 32-bit target. Only has an effect on Linux.
@@ -257,18 +257,18 @@ using `cmake -D BUILD_SHARED_LIBS=OFF ..`.
   This is being worked on upstream as well, and a future version might work with
   an unmodified crashpad version as well.
 
-| Feature    | Windows | macOS | Linux | Android |
-| ---------- | ------- | ----- | ----- | ------- |
-| Transports |         |       |       |         |
-| - curl     |         | ☑     | ☑     | (✓)     |
-| - winhttp  | ☑       |       |       |         |
-| - none     | ✓       | ✓     | ✓     | ☑       |
-|            |         |       |       |         |
-| Backends   |         |       |       |         |
-| - inproc   | ✓       | ✓     | ✓     | ☑       |
-| - crashpad | ☑       | ☑     | ✓     |         |
-| - breakpad | ✓       | ✓     | ☑     |         |
-| - none     | ✓       | ✓     | ✓     | ✓       |
+| Feature    | Windows | macOS | Linux | Android | iOS |
+| ---------- | ------- | ----- | ----- | ------- | --- |
+| Transports |         |       |       |         |     |
+| - curl     |         | ☑     | ☑     | (✓)     |     |
+| - winhttp  | ☑       |       |       |         |     |
+| - none     | ✓       | ✓     | ✓     | ☑       | ☑   |
+|            |         |       |       |         |     |
+| Backends   |         |       |       |         |     |
+| - inproc   | ✓       | ✓     | ✓     | ☑       |     |
+| - crashpad | ☑       | ☑     | ✓     |         |     |
+| - breakpad | ✓       | ✓     | ☑     | (✓)     | (✓) |
+| - none     | ✓       | ✓     | ✓     | ✓       |     |
 
 Legend:
 

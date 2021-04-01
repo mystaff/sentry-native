@@ -24,14 +24,19 @@ extern "C" {
 
 /* SDK Version */
 #define SENTRY_SDK_NAME "sentry.native"
-#define SENTRY_SDK_VERSION "0.4.7"
+#define SENTRY_SDK_VERSION "0.4.8"
 #define SENTRY_SDK_USER_AGENT SENTRY_SDK_NAME "/" SENTRY_SDK_VERSION
 
 /* common platform detection */
 #ifdef _WIN32
 #    define SENTRY_PLATFORM_WINDOWS
 #elif defined(__APPLE__)
-#    define SENTRY_PLATFORM_MACOS
+#    include <TargetConditionals.h>
+#    if defined(TARGET_OS_OSX) && TARGET_OS_OSX
+#        define SENTRY_PLATFORM_MACOS
+#    elif defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
+#        define SENTRY_PLATFORM_IOS
+#    endif
 #    define SENTRY_PLATFORM_DARWIN
 #    define SENTRY_PLATFORM_UNIX
 #elif defined(__ANDROID__)
@@ -784,7 +789,7 @@ SENTRY_API void sentry_options_set_max_breadcrumbs(
     sentry_options_t *opts, size_t max_breadcrumbs);
 
 /**
- * Sets the number of breadcrumbs being tracked and attached to events.
+ * Gets the number of breadcrumbs being tracked and attached to events.
  */
 SENTRY_API size_t sentry_options_get_max_breadcrumbs(
     const sentry_options_t *opts);
