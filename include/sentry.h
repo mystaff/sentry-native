@@ -709,6 +709,19 @@ SENTRY_API void sentry_options_set_release(
 SENTRY_API const char *sentry_options_get_release(const sentry_options_t *opts);
 
 /**
+ * Sets the args passed to the process when relaunching after a crash.
+ * Args must be in 1 single string separated by |
+ */
+SENTRY_API void sentry_options_set_relaunch_argv(
+    sentry_options_t *opts, const char *relaunch_argv);
+
+/**
+ * Gets the args passsed to the process when relaunching after a crash.
+ */
+SENTRY_API const char *sentry_options_get_relaunch_argv(
+    const sentry_options_t *opts);
+
+/**
  * Sets the environment.
  */
 SENTRY_API void sentry_options_set_environment(
