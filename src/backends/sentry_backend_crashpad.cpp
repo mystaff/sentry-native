@@ -209,9 +209,10 @@ sentry__crashpad_backend_startup(
     std::vector<base::FilePath> attachments;
 
     sentry_path_t *current_exe = sentry__path_current_exe();
-    if (current_exe) {
+    if (current_exe && options->relaunch_argv) {
         annotations["__td-crashed-pid"] = std::to_string(td__getpid());
         annotations["__td-relaunch-path"] = std::string(current_exe->path);
+        annotations["__td-relaunch_argv"] = std::string(options->relaunch_argv);
         sentry__path_free(current_exe);
     }
 
