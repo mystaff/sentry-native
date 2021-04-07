@@ -708,6 +708,12 @@ SENTRY_API void sentry_options_set_release(
  */
 SENTRY_API const char *sentry_options_get_release(const sentry_options_t *opts);
 
+SENTRY_API void sentry_options_set_relaunch_argv(
+    sentry_options_t *opts, const char *relaunch_argv);
+
+SENTRY_API const char *sentry_options_get_relaunch_argv(
+    const sentry_options_t *opts);
+
 /**
  * Sets the environment.
  */
