@@ -74,6 +74,7 @@ sentry_options_free(sentry_options_t *opts)
     }
     sentry__dsn_decref(opts->dsn);
     sentry_free(opts->release);
+    sentry_free(opts->relaunch_argv);
     sentry_free(opts->environment);
     sentry_free(opts->dist);
     sentry_free(opts->http_proxy);
@@ -153,6 +154,20 @@ const char *
 sentry_options_get_release(const sentry_options_t *opts)
 {
     return opts->release;
+}
+
+void
+sentry_options_set_relaunch_argv(
+    sentry_options_t *opts, const char *relaunch_argv)
+{
+    sentry_free(opts->relaunch_argv);
+    opts->relaunch_argv = sentry__string_clone(relaunch_argv);
+}
+
+const char *
+sentry_options_get_relaunch_argv(const sentry_options_t *opts)
+{
+    return opts->relaunch_argv;
 }
 
 void
