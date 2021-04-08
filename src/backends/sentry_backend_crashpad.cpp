@@ -39,6 +39,22 @@ extern "C" {
 #    pragma warning(pop)
 #endif
 
+#if defined(SENTRY_PLATFORM_WINDOWS)
+#    include <process.h>
+static int
+td__getpid()
+{
+    return _getpid();
+}
+#else
+#    include <unistd.h>
+static int
+td__getpid()
+{
+    return getpid();
+}
+#endif
+
 extern "C" {
 
 #ifdef SENTRY_PLATFORM_LINUX
@@ -191,6 +207,14 @@ sentry__crashpad_backend_startup(
 
     std::map<std::string, std::string> annotations;
     std::vector<base::FilePath> attachments;
+
+    sentry_path_t *current_exe = sentry__path_current_exe();
+    if (current_exe && options->relaunch_argv) {
+        annotations["__td-crashed-pid"] = std::to_string(td__getpid());
+        annotations["__td-relaunch-path"] = std::string(current_exe->path);
+        annotations["__td-relaunch-argv"] = std::string(options->relaunch_argv);
+        sentry__path_free(current_exe);
+    }
 
     // register attachments
     for (sentry_attachment_t *attachment = options->attachments; attachment;
