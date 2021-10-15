@@ -76,7 +76,13 @@ class CMake:
             ]
             if len(coverage_dirs) > 0:
                 subprocess.run(
-                    ["kcov", "--clean", "--merge", coveragedir, *coverage_dirs,]
+                    [
+                        "kcov",
+                        "--clean",
+                        "--merge",
+                        coveragedir,
+                        *coverage_dirs,
+                    ]
                 )
 
 
@@ -129,6 +135,8 @@ def cmake(cwd, targets, options=None):
         configcmd.append("-DSENTRY_BUILD_FORCE32=ON")
     if "asan" in os.environ.get("RUN_ANALYZER", ""):
         configcmd.append("-DWITH_ASAN_OPTION=ON")
+    if "tsan" in os.environ.get("RUN_ANALYZER", ""):
+        configcmd.append("-DWITH_TSAN_OPTION=ON")
 
     # we have to set `-Werror` for this cmake invocation only, otherwise
     # completely unrelated things will break
@@ -145,6 +153,8 @@ def cmake(cwd, targets, options=None):
         flags = "-fprofile-instr-generate -fcoverage-mapping"
         configcmd.append("-DCMAKE_C_FLAGS='{}'".format(flags))
         configcmd.append("-DCMAKE_CXX_FLAGS='{}'".format(flags))
+    if "CMAKE_DEFINES" in os.environ:
+        configcmd.extend(os.environ.get("CMAKE_DEFINES").split())
     env = dict(os.environ)
     env["CFLAGS"] = env["CXXFLAGS"] = " ".join(cflags)
 
@@ -159,9 +169,10 @@ def cmake(cwd, targets, options=None):
     # CodeChecker invocations and options are documented here:
     # https://github.com/Ericsson/codechecker/blob/master/docs/analyzer/user_guide.md
 
-    buildcmd = [*cmake, "--build", ".", "--parallel"]
+    buildcmd = [*cmake, "--build", "."]
     for target in targets:
         buildcmd.extend(["--target", target])
+    buildcmd.append("--parallel")
     if "code-checker" in os.environ.get("RUN_ANALYZER", ""):
         buildcmd = [
             "CodeChecker",

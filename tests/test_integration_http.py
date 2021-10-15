@@ -21,16 +21,15 @@ from .assertions import (
 
 pytestmark = pytest.mark.skipif(not has_http, reason="tests need http")
 
-auth_header = (
-    "Sentry sentry_key=uiaeosnrtdy, sentry_version=7, sentry_client=sentry.native/0.4.8"
-)
+auth_header = "Sentry sentry_key=uiaeosnrtdy, sentry_version=7, sentry_client=sentry.native/0.4.12"
 
 
 def test_capture_http(cmake, httpserver):
     tmp_path = cmake(["sentry_example"], {"SENTRY_BACKEND": "none"})
 
     httpserver.expect_oneshot_request(
-        "/api/123456/envelope/", headers={"x-sentry-auth": auth_header},
+        "/api/123456/envelope/",
+        headers={"x-sentry-auth": auth_header},
     ).respond_with_data("OK")
     env = dict(os.environ, SENTRY_DSN=make_dsn(httpserver), SENTRY_RELEASE="🤮🚀")
 
@@ -57,7 +56,8 @@ def test_session_http(cmake, httpserver):
     tmp_path = cmake(["sentry_example"], {"SENTRY_BACKEND": "none"})
 
     httpserver.expect_request(
-        "/api/123456/envelope/", headers={"x-sentry-auth": auth_header},
+        "/api/123456/envelope/",
+        headers={"x-sentry-auth": auth_header},
     ).respond_with_data("OK")
     env = dict(os.environ, SENTRY_DSN=make_dsn(httpserver))
 
@@ -70,7 +70,11 @@ def test_session_http(cmake, httpserver):
         env=env,
     )
     run(
-        tmp_path, "sentry_example", ["log", "start-session"], check=True, env=env,
+        tmp_path,
+        "sentry_example",
+        ["log", "start-session"],
+        check=True,
+        env=env,
     )
 
     assert len(httpserver.log) == 1
@@ -84,7 +88,8 @@ def test_capture_and_session_http(cmake, httpserver):
     tmp_path = cmake(["sentry_example"], {"SENTRY_BACKEND": "none"})
 
     httpserver.expect_request(
-        "/api/123456/envelope/", headers={"x-sentry-auth": auth_header},
+        "/api/123456/envelope/",
+        headers={"x-sentry-auth": auth_header},
     ).respond_with_data("OK")
     env = dict(os.environ, SENTRY_DSN=make_dsn(httpserver))
 
@@ -112,14 +117,15 @@ def test_exception_and_session_http(cmake, httpserver):
     tmp_path = cmake(["sentry_example"], {"SENTRY_BACKEND": "none"})
 
     httpserver.expect_request(
-        "/api/123456/envelope/", headers={"x-sentry-auth": auth_header},
+        "/api/123456/envelope/",
+        headers={"x-sentry-auth": auth_header},
     ).respond_with_data("OK")
     env = dict(os.environ, SENTRY_DSN=make_dsn(httpserver))
 
     run(
         tmp_path,
         "sentry_example",
-        ["log", "start-session", "capture-exception"],
+        ["log", "start-session", "capture-exception", "add-stacktrace"],
         check=True,
         env=env,
     )
@@ -129,6 +135,7 @@ def test_exception_and_session_http(cmake, httpserver):
     envelope = Envelope.deserialize(output)
 
     assert_exception(envelope)
+    assert_stacktrace(envelope, inside_exception=True)
     assert_session(envelope, {"init": True, "status": "ok", "errors": 1})
 
     output = httpserver.log[1][0].get_data()
@@ -138,10 +145,14 @@ def test_exception_and_session_http(cmake, httpserver):
 
 @pytest.mark.skipif(not has_files, reason="test needs a local filesystem")
 def test_abnormal_session(cmake, httpserver):
-    tmp_path = cmake(["sentry_example"], {"SENTRY_BACKEND": "none"},)
+    tmp_path = cmake(
+        ["sentry_example"],
+        {"SENTRY_BACKEND": "none"},
+    )
 
     httpserver.expect_request(
-        "/api/123456/envelope/", headers={"x-sentry-auth": auth_header},
+        "/api/123456/envelope/",
+        headers={"x-sentry-auth": auth_header},
     ).respond_with_data("OK")
     env = dict(os.environ, SENTRY_DSN=make_dsn(httpserver))
 
@@ -167,7 +178,11 @@ def test_abnormal_session(cmake, httpserver):
             session_file.write(session)
 
     run(
-        tmp_path, "sentry_example", ["log", "no-setup"], check=True, env=env,
+        tmp_path,
+        "sentry_example",
+        ["log", "no-setup"],
+        check=True,
+        env=env,
     )
 
     assert len(httpserver.log) == 2
@@ -187,7 +202,8 @@ def test_inproc_crash_http(cmake, httpserver):
     tmp_path = cmake(["sentry_example"], {"SENTRY_BACKEND": "inproc"})
 
     httpserver.expect_request(
-        "/api/123456/envelope/", headers={"x-sentry-auth": auth_header},
+        "/api/123456/envelope/",
+        headers={"x-sentry-auth": auth_header},
     ).respond_with_data("OK")
     env = dict(os.environ, SENTRY_DSN=make_dsn(httpserver))
 
@@ -200,7 +216,11 @@ def test_inproc_crash_http(cmake, httpserver):
     assert child.returncode  # well, its a crash after all
 
     run(
-        tmp_path, "sentry_example", ["log", "no-setup"], check=True, env=env,
+        tmp_path,
+        "sentry_example",
+        ["log", "no-setup"],
+        check=True,
+        env=env,
     )
 
     assert len(httpserver.log) == 1
@@ -215,11 +235,40 @@ def test_inproc_crash_http(cmake, httpserver):
     assert_crash(envelope)
 
 
+def test_inproc_reinstall(cmake, httpserver):
+    tmp_path = cmake(["sentry_example"], {"SENTRY_BACKEND": "inproc"})
+
+    env = dict(os.environ, SENTRY_DSN=make_dsn(httpserver))
+    httpserver.expect_request(
+        "/api/123456/envelope/",
+        headers={"x-sentry-auth": auth_header},
+    ).respond_with_data("OK")
+
+    child = run(
+        tmp_path,
+        "sentry_example",
+        ["log", "reinstall", "crash"],
+        env=env,
+    )
+    assert child.returncode  # well, its a crash after all
+
+    run(
+        tmp_path,
+        "sentry_example",
+        ["log", "no-setup"],
+        check=True,
+        env=env,
+    )
+
+    assert len(httpserver.log) == 1
+
+
 def test_inproc_dump_inflight(cmake, httpserver):
     tmp_path = cmake(["sentry_example"], {"SENTRY_BACKEND": "inproc"})
 
     httpserver.expect_request(
-        "/api/123456/envelope/", headers={"x-sentry-auth": auth_header},
+        "/api/123456/envelope/",
+        headers={"x-sentry-auth": auth_header},
     ).respond_with_data("OK")
     env = dict(os.environ, SENTRY_DSN=make_dsn(httpserver))
 
@@ -239,7 +288,8 @@ def test_breakpad_crash_http(cmake, httpserver):
     tmp_path = cmake(["sentry_example"], {"SENTRY_BACKEND": "breakpad"})
 
     httpserver.expect_request(
-        "/api/123456/envelope/", headers={"x-sentry-auth": auth_header},
+        "/api/123456/envelope/",
+        headers={"x-sentry-auth": auth_header},
     ).respond_with_data("OK")
     env = dict(os.environ, SENTRY_DSN=make_dsn(httpserver))
 
@@ -252,7 +302,11 @@ def test_breakpad_crash_http(cmake, httpserver):
     assert child.returncode  # well, its a crash after all
 
     run(
-        tmp_path, "sentry_example", ["log", "no-setup"], check=True, env=env,
+        tmp_path,
+        "sentry_example",
+        ["log", "no-setup"],
+        check=True,
+        env=env,
     )
 
     assert len(httpserver.log) == 1
@@ -268,11 +322,41 @@ def test_breakpad_crash_http(cmake, httpserver):
 
 
 @pytest.mark.skipif(not has_breakpad, reason="test needs breakpad backend")
+def test_breakpad_reinstall(cmake, httpserver):
+    tmp_path = cmake(["sentry_example"], {"SENTRY_BACKEND": "breakpad"})
+
+    env = dict(os.environ, SENTRY_DSN=make_dsn(httpserver))
+    httpserver.expect_request(
+        "/api/123456/envelope/",
+        headers={"x-sentry-auth": auth_header},
+    ).respond_with_data("OK")
+
+    child = run(
+        tmp_path,
+        "sentry_example",
+        ["log", "reinstall", "crash"],
+        env=env,
+    )
+    assert child.returncode  # well, its a crash after all
+
+    run(
+        tmp_path,
+        "sentry_example",
+        ["log", "no-setup"],
+        check=True,
+        env=env,
+    )
+
+    assert len(httpserver.log) == 1
+
+
+@pytest.mark.skipif(not has_breakpad, reason="test needs breakpad backend")
 def test_breakpad_dump_inflight(cmake, httpserver):
     tmp_path = cmake(["sentry_example"], {"SENTRY_BACKEND": "breakpad"})
 
     httpserver.expect_request(
-        "/api/123456/envelope/", headers={"x-sentry-auth": auth_header},
+        "/api/123456/envelope/",
+        headers={"x-sentry-auth": auth_header},
     ).respond_with_data("OK")
     env = dict(os.environ, SENTRY_DSN=make_dsn(httpserver))
 
@@ -303,7 +387,8 @@ def test_shutdown_timeout(cmake, httpserver):
         return "{}"
 
     httpserver.expect_request(
-        "/api/123456/envelope/", headers={"x-sentry-auth": auth_header},
+        "/api/123456/envelope/",
+        headers={"x-sentry-auth": auth_header},
     ).respond_with_handler(delayed)
     env = dict(os.environ, SENTRY_DSN=make_dsn(httpserver))
 
@@ -321,7 +406,8 @@ def test_shutdown_timeout(cmake, httpserver):
     httpserver.clear_log()
 
     httpserver.expect_request(
-        "/api/123456/envelope/", headers={"x-sentry-auth": auth_header},
+        "/api/123456/envelope/",
+        headers={"x-sentry-auth": auth_header},
     ).respond_with_data("OK")
 
     run(tmp_path, "sentry_example", ["log", "no-setup"], check=True, env=env)
