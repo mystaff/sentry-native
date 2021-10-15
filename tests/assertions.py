@@ -44,8 +44,10 @@ def assert_meta(envelope, release="test-example-release", integration=None):
     }
     expected_sdk = {
         "name": "sentry.native",
-        "version": "0.4.8",
-        "packages": [{"name": "github:getsentry/sentry-native", "version": "0.4.8"},],
+        "version": "0.4.12",
+        "packages": [
+            {"name": "github:getsentry/sentry-native", "version": "0.4.12"},
+        ],
     }
     if not is_android:
         if sys.platform == "win32":
@@ -163,8 +165,7 @@ def assert_exception(envelope):
         "type": "ParseIntError",
         "value": "invalid digit found in string",
     }
-    expected = {"exception": {"values": [exception]}}
-    assert matches(event, expected)
+    assert matches(event["exception"]["values"][0], exception)
     assert_timestamp(event["timestamp"])
 
 

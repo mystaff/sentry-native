@@ -24,7 +24,7 @@ extern "C" {
 
 /* SDK Version */
 #define SENTRY_SDK_NAME "sentry.native"
-#define SENTRY_SDK_VERSION "0.4.8"
+#define SENTRY_SDK_VERSION "0.4.12"
 #define SENTRY_SDK_USER_AGENT SENTRY_SDK_NAME "/" SENTRY_SDK_VERSION
 
 /* common platform detection */
@@ -338,12 +338,18 @@ typedef enum sentry_level_e {
 } sentry_level_t;
 
 /**
- * Creates a new empty event value.
+ * Creates a new empty Event value.
+ *
+ * See https://docs.sentry.io/platforms/native/enriching-events/ for how to
+ * further work with events, and https://develop.sentry.dev/sdk/event-payloads/
+ * for a detailed overview of the possible properties of an Event.
  */
 SENTRY_API sentry_value_t sentry_value_new_event(void);
 
 /**
- * Creates a new message event value.
+ * Creates a new Message Event value.
+ *
+ * See https://develop.sentry.dev/sdk/event-payloads/message/
  *
  * `logger` can be NULL to omit the logger value.
  */
@@ -351,12 +357,72 @@ SENTRY_API sentry_value_t sentry_value_new_message_event(
     sentry_level_t level, const char *logger, const char *text);
 
 /**
- * Creates a new breadcrumb with a specific type and message.
+ * Creates a new Breadcrumb with a specific type and message.
+ *
+ * See https://develop.sentry.dev/sdk/event-payloads/breadcrumbs/
  *
  * Either parameter can be NULL in which case no such attributes is created.
  */
 SENTRY_API sentry_value_t sentry_value_new_breadcrumb(
     const char *type, const char *message);
+
+/**
+ * Creates a new Exception value.
+ *
+ * This is intended for capturing language-level exception, such as from a
+ * try-catch block. `type` and `value` here refer to the exception class and
+ * a possible description.
+ *
+ * See https://develop.sentry.dev/sdk/event-payloads/exception/
+ *
+ * The returned value needs to be attached to an event via
+ * `sentry_event_add_exception`.
+ */
+SENTRY_EXPERIMENTAL_API sentry_value_t sentry_value_new_exception(
+    const char *type, const char *value);
+
+/**
+ * Creates a new Thread value.
+ *
+ * See https://develop.sentry.dev/sdk/event-payloads/threads/
+ *
+ * The returned value needs to be attached to an event via
+ * `sentry_event_add_thread`.
+ *
+ * `name` can be NULL.
+ */
+SENTRY_EXPERIMENTAL_API sentry_value_t sentry_value_new_thread(
+    uint64_t id, const char *name);
+
+/**
+ * Creates a new Stack Trace conforming to the Stack Trace Interface.
+ *
+ * See https://develop.sentry.dev/sdk/event-payloads/stacktrace/
+ *
+ * The returned object needs to be attached to either an exception
+ * event, or a thread object.
+ *
+ * If `ips` is NULL the current stack trace is captured, otherwise `len`
+ * stack trace instruction pointers are attached to the event.
+ */
+SENTRY_EXPERIMENTAL_API sentry_value_t sentry_value_new_stacktrace(
+    void **ips, size_t len);
+
+/**
+ * Adds an Exception to an Event value.
+ *
+ * This takes ownership of the `exception`.
+ */
+SENTRY_EXPERIMENTAL_API void sentry_event_add_exception(
+    sentry_value_t event, sentry_value_t exception);
+
+/**
+ * Adds a Thread to an Event value.
+ *
+ * This takes ownership of the `thread`.
+ */
+SENTRY_EXPERIMENTAL_API void sentry_event_add_thread(
+    sentry_value_t event, sentry_value_t thread);
 
 /* -- Experimental APIs -- */
 
@@ -371,10 +437,15 @@ SENTRY_EXPERIMENTAL_API char *sentry_value_to_msgpack(
     sentry_value_t value, size_t *size_out);
 
 /**
- * Adds a stacktrace to an event.
+ * Adds a stack trace to an event.
  *
- * If `ips` is NULL the current stacktrace is captured, otherwise `len`
- * stacktrace instruction pointers are attached to the event.
+ * The stack trace is added as part of a new thread object.
+ * This function is **deprecated** in favor of using
+ * `sentry_value_new_stacktrace` in combination with `sentry_value_new_thread`
+ * and `sentry_event_add_thread`.
+ *
+ * If `ips` is NULL the current stack trace is captured, otherwise `len`
+ * stack trace instruction pointers are attached to the event.
  */
 SENTRY_EXPERIMENTAL_API void sentry_event_value_add_stacktrace(
     sentry_value_t event, void **ips, size_t len);
@@ -398,9 +469,12 @@ typedef struct sentry_ucontext_s {
  *
  * If the address is given in `addr` the stack is unwound form there.
  * Otherwise (NULL is passed) the current instruction pointer is used as
- * start address. The stacktrace is written to `stacktrace_out` with upt o
- * `max_len` frames being written.  The actual number of unwound stackframes
- * is returned.
+ * start address.
+ * Unwinding with a given `addr` is not supported on all platforms.
+ *
+ * The stack trace in the form of instruction-addresses, is written to the
+ * caller allocated `stacktrace_out`, with up to `max_len` frames being written.
+ * The actual number of unwound stackframes is returned.
  */
 SENTRY_EXPERIMENTAL_API size_t sentry_unwind_stack(
     void *addr, void **stacktrace_out, size_t max_len);
@@ -408,8 +482,12 @@ SENTRY_EXPERIMENTAL_API size_t sentry_unwind_stack(
 /**
  * Unwinds the stack from the given context.
  *
- * The stacktrace is written to `stacktrace_out` with upt o `max_len` frames
- * being written.  The actual number of unwound stackframes is returned.
+ * The caller is responsible to construct an appropriate `sentry_ucontext_t`.
+ * Unwinding from a user context is not supported on all platforms.
+ *
+ * The stack trace in the form of instruction-addresses, is written to the
+ * caller allocated `stacktrace_out`, with up to `max_len` frames being written.
+ * The actual number of unwound stackframes is returned.
  */
 SENTRY_EXPERIMENTAL_API size_t sentry_unwind_stack_from_ucontext(
     const sentry_ucontext_t *uctx, void **stacktrace_out, size_t max_len);
@@ -530,7 +608,7 @@ typedef struct sentry_options_s sentry_options_t;
  *   In case of `false`, sentry will log an error, but continue with freeing the
  *   transport.
  * * `free_func`: Frees the transports `state`. This hook might be called even
- *   though `shudown_func` returned `false` previously.
+ *   though `shutdown_func` returned `false` previously.
  *
  * The transport interface might be extended in the future with hooks to flush
  * its internal queue without shutting down, and to dump its internal queue to
@@ -660,8 +738,12 @@ SENTRY_API void sentry_options_set_transport(
  * same event. In case the event should be discarded, the callback needs to
  * call `sentry_value_decref` on the provided event, and return a
  * `sentry_value_new_null()` instead.
+ *
  * This function may be invoked inside of a signal handler and must be safe for
  * that purpose, see https://man7.org/linux/man-pages/man7/signal-safety.7.html.
+ * On Windows, it may be called from inside of a `UnhandledExceptionFilter`, see
+ * the documentation on SEH (structured exception handling) for more information
+ * https://docs.microsoft.com/en-us/windows/win32/debug/structured-exception-handling
  */
 typedef sentry_value_t (*sentry_event_function_t)(
     sentry_value_t event, void *hint, void *closure);
@@ -827,7 +909,7 @@ SENTRY_API void sentry_options_set_logger(
  * Automatic session tracking is enabled by default and is equivalent to calling
  * `sentry_start_session` after startup.
  * There can only be one running session, and the current session will always be
- * closed implicitly by `sentry_shutdown`, when starting a new session with
+ * closed implicitly by `sentry_close`, when starting a new session with
  * `sentry_start_session`, or manually by calling `sentry_end_session`.
  */
 SENTRY_API void sentry_options_set_auto_session_tracking(
@@ -962,6 +1044,19 @@ SENTRY_API void sentry_options_set_database_pathw(
 SENTRY_API void sentry_options_set_system_crash_reporter_enabled(
     sentry_options_t *opts, int enabled);
 
+/**
+ * Sets the maximum time (in milliseconds) to wait for the asynchronous tasks to
+ * end on shutdown, before attempting a forced termination.
+ */
+SENTRY_API void sentry_options_set_shutdown_timeout(
+    sentry_options_t *opts, uint64_t shutdown_timeout);
+
+/**
+ * Gets the maximum time (in milliseconds) to wait for the asynchronous tasks to
+ * end on shutdown, before attempting a forced termination.
+ */
+SENTRY_API uint64_t sentry_options_get_shutdown_timeout(sentry_options_t *opts);
+
 /* -- Global APIs -- */
 
 /**
@@ -977,6 +1072,15 @@ SENTRY_API int sentry_init(sentry_options_t *options);
 
 /**
  * Shuts down the sentry client and forces transports to flush out.
+ *
+ * Returns 0 on success.
+ */
+SENTRY_API int sentry_close(void);
+
+/**
+ * Shuts down the sentry client and forces transports to flush out.
+ *
+ * This is a **deprecated** alias for `sentry_close`.
  *
  * Returns 0 on success.
  */
