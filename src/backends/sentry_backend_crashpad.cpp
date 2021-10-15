@@ -211,8 +211,17 @@ sentry__crashpad_backend_startup(
     sentry_path_t *current_exe = sentry__path_current_exe();
     if (current_exe && options->relaunch_argv) {
         annotations["__td-crashed-pid"] = std::to_string(td__getpid());
-        annotations["__td-relaunch-path"] = std::string(current_exe->path);
         annotations["__td-relaunch-argv"] = std::string(options->relaunch_argv);
+#ifdef SENTRY_PLATFORM_WINDOWS
+        std::wstring wstrPath(current_exe->path);
+        std::string strPath;
+        std::transform(wstrPath.begin(), wstrPath.end(),
+            std::back_inserter(strPath), [](wchar_t c) { return (char)c; });
+
+        annotations["__td-relaunch-path"] = strPath;
+#else
+        annotations["__td-relaunch-path"] = std::string(current_exe->path);
+#endif
         sentry__path_free(current_exe);
     }
 
