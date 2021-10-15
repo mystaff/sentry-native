@@ -1,5 +1,98 @@
 # Changelog
 
+## 0.4.12
+
+**Features**:
+
+- Make the shutdown timeout configurable via `sentry_options_set_shutdown_timeout`.
+
+**Fixes**:
+
+- The crashpad backend compiles with mingw again.
+- Build System improvements.
+
+**Thank you**:
+
+Features, fixes and improvements in this release have been contributed by:
+
+- [@irov](https://github.com/irov)
+- [@past-due](https://github.com/past-due)
+- [@andrei-mu](https://github.com/andrei-mu)
+- [@rpadaki](https://github.com/rpadaki)
+
+## 0.4.11
+
+**Fixes**:
+
+- The crashpad backend now respects the `max_breadcrumbs` setting.
+- Hanging HTTP requests will now be canceled on shutdown in the WinHTTP transport.
+- The Modulefinder and Android unwinder now use safer memory access.
+- Possible races and deadlocks have been fixed in `init`/`close`, and in API related to sessions.
+
+**Thank you**:
+
+Features, fixes and improvements in this release have been contributed by:
+
+- [@smibe](https://github.com/smibe)
+
+## 0.4.10
+
+**Fixes**:
+
+- Fix a potential deadlock in macOS modulefinder.
+- Lower Stack usage, to lower change of stack overflows.
+- Avoid a double-free when parsing an invalid DSN.
+- Improvements to Unity Builds and 32-bit Builds.
+- Fix infinite recursion in signal handler by correctly cleaning up on shutdown.
+
+**Internal**:
+
+- Update Crashpad and Breakpad submodules to 2021-06-14.
+
+**Thank you**:
+
+Features, fixes and improvements in this release have been contributed by:
+
+- [@janisozaur](https://github.com/janisozaur)
+- [@bschatt](https://github.com/bschatt)
+- [@GenuineAster](https://github.com/GenuineAster)
+
+## 0.4.9
+
+**Features**:
+
+- Rewrote the Linux modulefinder which should now work correctly when encountering gaps in the memory mapping of loaded libraries, and supports libraries loaded from a file offset, such as libraries loaded directly from `.apk` files on Android.
+- Invoke the `before_send` hook at time of a hard crash when using the Windows or Linux Crashpad backend.
+- Added the following new convenience functions:
+  - `sentry_value_new_exception`
+  - `sentry_value_new_thread`
+  - `sentry_value_new_stacktrace`
+  - `sentry_event_add_exception`
+  - `sentry_event_add_thread`
+  - The `sentry_event_value_add_stacktrace` is deprecated.
+- Renamed `sentry_shutdown` to `sentry_close`, though the old function is still available.
+- Updated Qt integration to Qt 6.
+
+**Fixes**:
+
+- Optimized and fixed bugs in the JSON parser/serializer.
+- Build fixes for PPC and universal macOS.
+- Fixes to build using musl libc.
+- Correctness fixes around printf and strftime usage.
+- Allow building and running on older macOS versions.
+
+**Internal**:
+
+- Update Crashpad and Breakpad submodules to 2021-04-12
+
+**Thank you**:
+
+Features, fixes and improvements in this release have been contributed by:
+
+- [@mastertheknife](https://github.com/mastertheknife)
+- [@torarnv](https://github.com/torarnv)
+- [@encounter](https://github.com/encounter)
+
 ## 0.4.8
 
 **Features**:
