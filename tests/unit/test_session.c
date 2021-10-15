@@ -78,7 +78,7 @@ SENTRY_TEST(session_basics)
         user, "username", sentry_value_new_string("swatinem"));
     sentry_set_user(user);
 
-    sentry_shutdown();
+    sentry_close();
 
     TEST_CHECK_INT_EQUAL(called, 2);
 }
@@ -93,8 +93,11 @@ send_sampled_envelope(const sentry_envelope_t *envelope, void *data)
 {
     session_assertion_t *assertion = data;
 
+    SENTRY_DEBUG("send_sampled_envelope");
     if (assertion->assert_session) {
         assertion->called += 1;
+
+        SENTRY_DEBUG("assertion + 1");
 
         TEST_CHECK_INT_EQUAL(sentry__envelope_get_item_count(envelope), 1);
 
@@ -138,7 +141,7 @@ SENTRY_TEST(count_sampled_events)
     }
 
     assertion.assert_session = true;
-    sentry_shutdown();
+    sentry_close();
 
     TEST_CHECK_INT_EQUAL(assertion.called, 1);
 }

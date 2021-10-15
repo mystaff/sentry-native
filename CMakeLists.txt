@@ -39,7 +39,7 @@ if(NOT CMAKE_C_STANDARD)
 endif()
 
 if(NOT CMAKE_CXX_STANDARD)
-  set(CMAKE_CXX_STANDARD 11)
+  set(CMAKE_CXX_STANDARD 14)
 endif()
 
 include(GNUInstallDirs)
@@ -79,6 +79,7 @@ if(LINUX)
 	if(SENTRY_BUILD_FORCE32)
 		set(CMAKE_C_FLAGS    "${CMAKE_C_FLAGS} -m32 -D_FILE_OFFSET_BITS=64 -D_LARGEFILE64_SOURCE")
 		set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -m32 -D_FILE_OFFSET_BITS=64 -D_LARGEFILE64_SOURCE")
+		set(CMAKE_ASM_FLAGS  "${CMAKE_ASM_FLAGS} -m32 -D_FILE_OFFSET_BITS=64 -D_LARGEFILE64_SOURCE")
 		set_property(GLOBAL PROPERTY FIND_LIBRARY_USE_LIB64_PATHS OFF)
 	endif()
 endif()
@@ -258,15 +259,17 @@ target_compile_definitions(sentry PRIVATE SIZEOF_LONG=${CMAKE_SIZEOF_LONG})
 
 if(SENTRY_TRANSPORT_CURL)
 	find_package(CURL REQUIRED)
-	target_include_directories(sentry PRIVATE ${CURL_INCLUDE_DIR})
-	# The exported sentry target must not contain any path of the build machine, therefore use generator expressions
-	# FIXME: cmake 3.12 introduced the target CURL::libcurl
-	string(REPLACE ";" "$<SEMICOLON>" GENEX_CURL_LIBRARIES "${CURL_LIBRARIES}")
-	string(REPLACE ";" "$<SEMICOLON>" GENEX_CURL_COMPILE_DEFINITIONS "${CURL_COMPILE_DEFINITIONS}")
-	target_link_libraries(sentry PRIVATE $<BUILD_INTERFACE:${GENEX_CURL_LIBRARIES}>)
-	target_compile_definitions(sentry PRIVATE $<BUILD_INTERFACE:${GENEX_CURL_COMPILE_DEFINITIONS}>)
-elseif(SENTRY_TRANSPORT_WINHTTP)
-	target_link_libraries(sentry PRIVATE winhttp)
+	if(TARGET CURL::libcurl) # Only available in cmake 3.12+
+		target_link_libraries(sentry PRIVATE CURL::libcurl)
+	else()
+		# Needed for cmake < 3.12 support (cmake 3.12 introduced the target CURL::libcurl)
+		target_include_directories(sentry PRIVATE ${CURL_INCLUDE_DIR})
+		# The exported sentry target must not contain any path of the build machine, therefore use generator expressions
+		string(REPLACE ";" "$<SEMICOLON>" GENEX_CURL_LIBRARIES "${CURL_LIBRARIES}")
+		string(REPLACE ";" "$<SEMICOLON>" GENEX_CURL_COMPILE_DEFINITIONS "${CURL_COMPILE_DEFINITIONS}")
+		target_link_libraries(sentry PRIVATE $<BUILD_INTERFACE:${GENEX_CURL_LIBRARIES}>)
+		target_compile_definitions(sentry PRIVATE $<BUILD_INTERFACE:${GENEX_CURL_COMPILE_DEFINITIONS}>)
+	endif()
 endif()
 
 set_property(TARGET sentry PROPERTY C_VISIBILITY_PRESET hidden)
@@ -345,7 +348,6 @@ if(WIN32)
 		target_compile_definitions(sentry PRIVATE "_WIN32_WINNT=0x0501")
 	endif()
 
-	target_link_libraries(sentry PRIVATE shlwapi)
 	# crashpad does not support Windows XP toolset
 	if(MSVC AND CMAKE_GENERATOR_TOOLSET MATCHES "_xp$" AND SENTRY_BACKEND_CRASHPAD)
 		message(FATAL_ERROR "MSVC XP toolset does not support Crashpad")
@@ -358,7 +360,11 @@ if(ANDROID)
 elseif(LINUX)
     set(_SENTRY_PLATFORM_LIBS "dl" "rt")
 elseif(WIN32)
-    set(_SENTRY_PLATFORM_LIBS "dbghelp" "version")
+    set(_SENTRY_PLATFORM_LIBS "dbghelp" "shlwapi" "version")
+endif()
+
+if(SENTRY_TRANSPORT_WINHTTP)
+	list(APPEND _SENTRY_PLATFORM_LIBS "winhttp")
 endif()
 
 # handle platform threads library
@@ -413,7 +419,7 @@ if(SENTRY_BACKEND_CRASHPAD)
 		endif()
 		add_subdirectory(external/crashpad crashpad_build)
 
-		# set static runime if enabled
+		# set static runtime if enabled
 		if(SENTRY_BUILD_RUNTIMESTATIC AND MSVC)
 			set_property(TARGET crashpad_client PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 			set_property(TARGET crashpad_compat PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -469,8 +475,17 @@ endif()
 
 option(SENTRY_INTEGRATION_QT "Build Qt integration")
 if(SENTRY_INTEGRATION_QT)
-	find_package(Qt5 COMPONENTS Core REQUIRED)
-	target_link_libraries(sentry PRIVATE Qt5::Core)
+	if(QT_DEFAULT_MAJOR_VERSION)
+		# Let user choose major version
+		set(Qt_VERSION_MAJOR ${QT_DEFAULT_MAJOR_VERSION})
+	else()
+		# Find best match, prioritizing Qt 6 if available
+		find_package(Qt NAMES Qt6 Qt5 COMPONENTS Core REQUIRED)
+	endif()
+	find_package(Qt${Qt_VERSION_MAJOR} COMPONENTS Core REQUIRED)
+	message(STATUS "Found Qt: ${Qt${Qt_VERSION_MAJOR}_DIR} "
+		"(found version \"${Qt${Qt_VERSION_MAJOR}_VERSION}\")")
+	target_link_libraries(sentry PRIVATE Qt${Qt_VERSION_MAJOR}::Core)
 endif()
 
 include(CMakePackageConfigHelpers)
