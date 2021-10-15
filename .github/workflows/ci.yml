@@ -64,59 +64,19 @@ jobs:
             os: ubuntu-20.04
             CC: gcc-10
             CXX: g++-10
-            # ERROR_ON_WARNINGS: 1
-            # The GCC analyzer 10.0.1 (as on CI) has an internal compiler error
-            # currently, and is not stable enough to activate.
-            # RUN_ANALYZER: gcc
-          - name: Linux (clang 11 + asan + llvm-cov)
-            os: ubuntu-20.04
-            CC: clang-11
-            CXX: clang++-11
-            ERROR_ON_WARNINGS: 1
-            RUN_ANALYZER: asan,llvm-cov
-          - name: Linux (clang 11 + kcov)
-            os: ubuntu-20.04
-            CC: clang-11
-            CXX: clang++-11
-            ERROR_ON_WARNINGS: 1
-            RUN_ANALYZER: kcov
-          - name: Linux (code-checker + valgrind)
-            os: ubuntu-20.04
-            RUN_ANALYZER: code-checker,valgrind
-          - name: macOS (xcode llvm)
-            os: macOs-latest
-            ERROR_ON_WARNINGS: 1
-          - name: macOS (xcode llvm + universal)
-            os: macOs-latest
-            ERROR_ON_WARNINGS: 1
-            CMAKE_DEFINES: -DCMAKE_OSX_ARCHITECTURES=arm64;x86_64
-          - name: macOS (clang 11 + asan + llvm-cov)
+          - name: macOS (xcode)
             os: macOs-latest
             ERROR_ON_WARNINGS: 1
           - name: Windows (VS2017, 32bit)
             os: vs2017-win2016
           - name: Windows (latest)
             os: windows-latest
-          # The Android emulator is currently only available on macos, see:
-          # https://docs.microsoft.com/en-us/azure/devops/pipelines/ecosystems/android?view=azure-devops#test-on-the-android-emulator
-          - name: Android (API 16, NDK 20)
-            os: macOs-latest
-            ANDROID_API: 16
-            ANDROID_NDK: 20.1.5948944
-          - name: Android (API 30, NDK 22)
-            os: macOs-latest
-            ANDROID_API: 30
-            ANDROID_NDK: 22.1.7171670
 
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
 
     env:
       ERROR_ON_WARNINGS: ${{ matrix.ERROR_ON_WARNINGS }}
-      RUN_ANALYZER: ${{ matrix.RUN_ANALYZER }}
-      ANDROID_API: ${{ matrix.ANDROID_API }}
-      ANDROID_NDK: ${{ matrix.ANDROID_NDK }}
-      CMAKE_DEFINES: ${{ matrix.CMAKE_DEFINES }}
 
     steps:
       - uses: actions/checkout@v2
