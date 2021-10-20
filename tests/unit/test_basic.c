@@ -3,7 +3,7 @@
 #include <sentry.h>
 
 static void
-send_envelope(const sentry_envelope_t *envelope, void *data)
+send_envelope_test_basic(const sentry_envelope_t *envelope, void *data)
 {
     uint64_t *called = data;
     *called += 1;
@@ -33,8 +33,8 @@ SENTRY_TEST(basic_function_transport)
 
     sentry_options_t *options = sentry_options_new();
     sentry_options_set_dsn(options, "https://foo@sentry.invalid/42");
-    sentry_options_set_transport(
-        options, sentry_new_function_transport(send_envelope, &called));
+    sentry_options_set_transport(options,
+        sentry_new_function_transport(send_envelope_test_basic, &called));
     sentry_options_set_release(options, "prod");
     sentry_options_set_require_user_consent(options, true);
     sentry_init(options);
@@ -57,7 +57,7 @@ SENTRY_TEST(basic_function_transport)
     sentry_capture_event(sentry_value_new_message_event(SENTRY_LEVEL_INFO,
         "root", "not captured either due to revoked consent"));
 
-    sentry_shutdown();
+    sentry_close();
 
     TEST_CHECK_INT_EQUAL(called, 2);
 }
@@ -80,7 +80,8 @@ SENTRY_TEST(sampling_before_send)
     sentry_options_t *options = sentry_options_new();
     sentry_options_set_dsn(options, "https://foo@sentry.invalid/42");
     sentry_options_set_transport(options,
-        sentry_new_function_transport(send_envelope, &called_transport));
+        sentry_new_function_transport(
+            send_envelope_test_basic, &called_transport));
     sentry_options_set_before_send(options, before_send, &called_beforesend);
     sentry_options_set_sample_rate(options, 0.75);
     sentry_init(options);
@@ -90,7 +91,7 @@ SENTRY_TEST(sampling_before_send)
             sentry_value_new_message_event(SENTRY_LEVEL_INFO, NULL, "foo"));
     }
 
-    sentry_shutdown();
+    sentry_close();
 
     TEST_CHECK_INT_EQUAL(called_transport, 0);
     // well, its random after all
