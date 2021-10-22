@@ -240,14 +240,24 @@ def test_inproc_reinstall(cmake, httpserver):
 
     env = dict(os.environ, SENTRY_DSN=make_dsn(httpserver))
     httpserver.expect_request(
-        "/api/123456/envelope/", headers={"x-sentry-auth": auth_header},
+        "/api/123456/envelope/",
+        headers={"x-sentry-auth": auth_header},
     ).respond_with_data("OK")
 
-    child = run(tmp_path, "sentry_example", ["log", "reinstall", "crash"], env=env,)
+    child = run(
+        tmp_path,
+        "sentry_example",
+        ["log", "reinstall", "crash"],
+        env=env,
+    )
     assert child.returncode  # well, its a crash after all
 
     run(
-        tmp_path, "sentry_example", ["log", "no-setup"], check=True, env=env,
+        tmp_path,
+        "sentry_example",
+        ["log", "no-setup"],
+        check=True,
+        env=env,
     )
 
     assert len(httpserver.log) == 1
@@ -317,14 +327,24 @@ def test_breakpad_reinstall(cmake, httpserver):
 
     env = dict(os.environ, SENTRY_DSN=make_dsn(httpserver))
     httpserver.expect_request(
-        "/api/123456/envelope/", headers={"x-sentry-auth": auth_header},
+        "/api/123456/envelope/",
+        headers={"x-sentry-auth": auth_header},
     ).respond_with_data("OK")
 
-    child = run(tmp_path, "sentry_example", ["log", "reinstall", "crash"], env=env,)
+    child = run(
+        tmp_path,
+        "sentry_example",
+        ["log", "reinstall", "crash"],
+        env=env,
+    )
     assert child.returncode  # well, its a crash after all
 
     run(
-        tmp_path, "sentry_example", ["log", "no-setup"], check=True, env=env,
+        tmp_path,
+        "sentry_example",
+        ["log", "no-setup"],
+        check=True,
+        env=env,
     )
 
     assert len(httpserver.log) == 1
