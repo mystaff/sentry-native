@@ -11,3 +11,4 @@
 	path = external/crashpad
 	url = https://github.com/mystaff/crashpad.git
 	branch = yalbar-STAFF-121291
+
