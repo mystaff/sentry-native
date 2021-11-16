@@ -417,6 +417,10 @@ if(SENTRY_BACKEND_CRASHPAD)
 		else()
 			set(CRASHPAD_ENABLE_INSTALL ON CACHE BOOL "Enable crashpad installation" FORCE)
 		endif()
+		if(APPLE AND NOT IOS)
+			set(CRASHPAD_ENABLE_STACKTRACE ON CACHE BOOL "Enable client-side stacktrace" FORCE)
+		endif()
+
 		add_subdirectory(external/crashpad crashpad_build)
 
 		# set static runtime if enabled

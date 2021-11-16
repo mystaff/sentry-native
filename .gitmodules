@@ -10,4 +10,5 @@
 [submodule "external/crashpad"]
 	path = external/crashpad
 	url = https://github.com/mystaff/crashpad.git
-	branch = timedoctor
+	branch = yalbar-STAFF-121291
+
