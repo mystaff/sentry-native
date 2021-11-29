@@ -100,10 +100,10 @@ jobs:
           if [[ -v MOS ]] && [[ $MOS == "vs2017-win2016" ]]; then ARCH=Win32; else ARCH=x64; fi
           echo ARCH=$ARCH >> $GITHUB_ENV
           cmake --version
-          cmake -B build-release -DSENTRY_BUILD_SHARED_LIBS=OFF -DCMAKE_SYSTEM_VERSION="10.0.18362.0" -DSENTRY_BACKEND=breakpad -A $ARCH
+          cmake -B build-release -DSENTRY_BUILD_SHARED_LIBS=OFF -DCMAKE_SYSTEM_VERSION="10.0.18362.0" -DSENTRY_BACKEND=crashpad -A $ARCH
           cmake --build build-release --config Release
           cmake --install build-release --prefix release --config Release
-          cmake -B build-debug -DSENTRY_BUILD_SHARED_LIBS=OFF -DCMAKE_SYSTEM_VERSION="10.0.18362.0" -DSENTRY_BACKEND=breakpad -A $ARCH
+          cmake -B build-debug -DSENTRY_BUILD_SHARED_LIBS=OFF -DCMAKE_SYSTEM_VERSION="10.0.18362.0" -DSENTRY_BACKEND=crashpad -A $ARCH
           cmake --build build-debug --parallel --config Debug
           cmake --install build-debug --prefix debug --config Debug
 
@@ -127,7 +127,7 @@ jobs:
         shell: bash
         run: |
           cmake --version
-          cmake -B build -DSENTRY_BUILD_SHARED_LIBS=OFF -DSENTRY_BACKEND=crashpad
+          cmake -B build -DSENTRY_BUILD_SHARED_LIBS=OFF -DSENTRY_BACKEND=crashpad -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
           cmake --build build --parallel --config Release
           cmake --install build --prefix install --config Release
 
