@@ -24,6 +24,7 @@
 #include "sentry_string.h"
 #include "sentry_sync.h"
 #include "sentry_utils.h"
+#include "sentry_uuid.h"
 #include "sentry_value.h"
 
 /**
@@ -974,6 +975,30 @@ sentry__value_new_hexstring(const uint8_t *bytes, size_t len)
 }
 
 sentry_value_t
+sentry__value_new_span_uuid(const sentry_uuid_t *uuid)
+{
+    char *buf = sentry_malloc(17);
+    if (!buf) {
+        return sentry_value_new_null();
+    }
+    sentry__span_uuid_as_string(uuid, buf);
+    buf[16] = '\0';
+    return sentry__value_new_string_owned(buf);
+}
+
+sentry_value_t
+sentry__value_new_internal_uuid(const sentry_uuid_t *uuid)
+{
+    char *buf = sentry_malloc(33);
+    if (!buf) {
+        return sentry_value_new_null();
+    }
+    sentry__internal_uuid_as_string(uuid, buf);
+    buf[32] = '\0';
+    return sentry__value_new_string_owned(buf);
+}
+
+sentry_value_t
 sentry__value_new_uuid(const sentry_uuid_t *uuid)
 {
     char *buf = sentry_malloc(37);
@@ -1097,6 +1122,76 @@ sentry_value_new_stacktrace(void **ips, size_t len)
     sentry_value_set_by_key(stacktrace, "frames", frames);
 
     return stacktrace;
+}
+
+sentry_value_t
+sentry__value_new_span(sentry_value_t parent, const char *operation)
+{
+    sentry_value_t span = sentry_value_new_object();
+
+    sentry_transaction_context_set_operation(span, operation);
+    sentry_value_set_by_key(span, "status", sentry_value_new_string("ok"));
+
+    if (!sentry_value_is_null(parent)) {
+        sentry_value_set_by_key(span, "trace_id",
+            sentry_value_get_by_key_owned(parent, "trace_id"));
+        sentry_value_set_by_key(span, "parent_span_id",
+            sentry_value_get_by_key_owned(parent, "span_id"));
+        sentry_value_set_by_key(
+            span, "sampled", sentry_value_get_by_key_owned(parent, "sampled"));
+    }
+
+    return span;
+}
+
+sentry_value_t
+sentry_value_new_transaction_context(const char *name, const char *operation)
+{
+    sentry_value_t transaction_context
+        = sentry__value_new_span(sentry_value_new_null(), operation);
+    sentry_transaction_context_set_name(transaction_context, name);
+
+    sentry_uuid_t trace_id = sentry_uuid_new_v4();
+    sentry_value_set_by_key(transaction_context, "trace_id",
+        sentry__value_new_internal_uuid(&trace_id));
+
+    sentry_uuid_t span_id = sentry_uuid_new_v4();
+    sentry_value_set_by_key(
+        transaction_context, "span_id", sentry__value_new_span_uuid(&span_id));
+
+    sentry_transaction_context_set_name(transaction_context, name);
+
+    return transaction_context;
+}
+
+void
+sentry_transaction_context_set_name(
+    sentry_value_t transaction_context, const char *name)
+{
+    sentry_value_set_by_key(
+        transaction_context, "transaction", sentry_value_new_string(name));
+}
+
+void
+sentry_transaction_context_set_operation(
+    sentry_value_t transaction_context, const char *operation)
+{
+    sentry_value_set_by_key(
+        transaction_context, "op", sentry_value_new_string(operation));
+}
+
+void
+sentry_transaction_context_set_sampled(
+    sentry_value_t transaction_context, int sampled)
+{
+    sentry_value_set_by_key(
+        transaction_context, "sampled", sentry_value_new_bool(sampled));
+}
+
+void
+sentry_transaction_context_remove_sampled(sentry_value_t transaction_context)
+{
+    sentry_value_remove_by_key(transaction_context, "sampled");
 }
 
 static sentry_value_t
