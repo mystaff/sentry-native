@@ -47,6 +47,8 @@ set(CMAKE_INSTALL_CMAKEDIR "${CMAKE_INSTALL_LIBDIR}/cmake/sentry")
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 	set(LINUX TRUE)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "AIX" OR CMAKE_SYSTEM_NAME STREQUAL "OS400")
+	set(AIX TRUE)
 endif()
 
 #setup sentry library type
@@ -93,7 +95,7 @@ endif()
 
 if(WIN32)
 	set(SENTRY_DEFAULT_TRANSPORT "winhttp")
-elseif((APPLE AND NOT IOS) OR LINUX)
+elseif((APPLE AND NOT IOS) OR LINUX OR AIX)
 	set(SENTRY_DEFAULT_TRANSPORT "curl")
 else()
 	set(SENTRY_DEFAULT_TRANSPORT "none")
@@ -137,8 +139,10 @@ else()
 	set(SENTRY_DEFAULT_BACKEND "inproc")
 endif()
 
-set(SENTRY_BACKEND ${SENTRY_DEFAULT_BACKEND} CACHE STRING
-  "The sentry backend responsible for reporting crashes, can be either 'none', 'inproc', 'breakpad' or 'crashpad'.")
+if(NOT DEFINED SENTRY_BACKEND)
+	set(SENTRY_BACKEND ${SENTRY_DEFAULT_BACKEND} CACHE STRING
+		"The sentry backend responsible for reporting crashes, can be either 'none', 'inproc', 'breakpad' or 'crashpad'.")
+endif()
 
 if(SENTRY_BACKEND STREQUAL "crashpad")
 	set(SENTRY_BACKEND_CRASHPAD TRUE)
@@ -236,6 +240,10 @@ endif()
 
 set_target_properties(sentry PROPERTIES PUBLIC_HEADER "include/sentry.h")
 
+if(DEFINED SENTRY_FOLDER)
+	set_target_properties(sentry PROPERTIES FOLDER ${SENTRY_FOLDER})
+endif()
+
 # check size type
 include(CheckTypeSize)
 check_type_size("long" CMAKE_SIZEOF_LONG)
@@ -257,8 +265,20 @@ else()
 endif()
 target_compile_definitions(sentry PRIVATE SIZEOF_LONG=${CMAKE_SIZEOF_LONG})
 
+# AIX needs libm for isnan used in test suite
+if(CMAKE_SYSTEM_NAME STREQUAL "AIX" OR CMAKE_SYSTEM_NAME STREQUAL "OS400")
+	target_link_libraries(sentry PRIVATE m)
+endif()
+# On IBM i PASE, flock is in libutil. Here because "sentry" exists now.
+if(CMAKE_SYSTEM_NAME STREQUAL "OS400")
+	target_link_libraries(sentry PRIVATE util)
+endif()
+
 if(SENTRY_TRANSPORT_CURL)
-	find_package(CURL REQUIRED)
+	if(NOT CURL_FOUND) # Some other lib might bring libcurl already
+		find_package(CURL REQUIRED)
+	endif()
+
 	if(TARGET CURL::libcurl) # Only available in cmake 3.12+
 		target_link_libraries(sentry PRIVATE CURL::libcurl)
 	else()
@@ -434,6 +454,20 @@ if(SENTRY_BACKEND_CRASHPAD)
 			set_property(TARGET mini_chromium PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 		endif()
 
+		if(DEFINED SENTRY_FOLDER)
+			set_target_properties(crashpad_client PROPERTIES FOLDER ${SENTRY_FOLDER})
+			set_target_properties(crashpad_compat PROPERTIES FOLDER ${SENTRY_FOLDER})
+			set_target_properties(crashpad_getopt PROPERTIES FOLDER ${SENTRY_FOLDER})
+			set_target_properties(crashpad_handler PROPERTIES FOLDER ${SENTRY_FOLDER})
+			set_target_properties(crashpad_handler_lib PROPERTIES FOLDER ${SENTRY_FOLDER})
+			set_target_properties(crashpad_minidump PROPERTIES FOLDER ${SENTRY_FOLDER})
+			set_target_properties(crashpad_snapshot PROPERTIES FOLDER ${SENTRY_FOLDER})
+			set_target_properties(crashpad_tools PROPERTIES FOLDER ${SENTRY_FOLDER})
+			set_target_properties(crashpad_util PROPERTIES FOLDER ${SENTRY_FOLDER})
+			set_target_properties(crashpad_zlib PROPERTIES FOLDER ${SENTRY_FOLDER})
+			set_target_properties(mini_chromium PROPERTIES FOLDER ${SENTRY_FOLDER})
+		endif()
+
 		target_link_libraries(sentry PRIVATE
 			$<BUILD_INTERFACE:crashpad::client>
 			$<INSTALL_INTERFACE:sentry_crashpad::client>
@@ -462,6 +496,11 @@ elseif(SENTRY_BACKEND_BREAKPAD)
 		target_link_libraries(sentry PRIVATE
 			breakpad_client
 		)
+
+		if(DEFINED SENTRY_FOLDER)
+			set_target_properties(breakpad_client PROPERTIES FOLDER ${SENTRY_FOLDER})
+		endif()
+
 		if(NOT SENTRY_BUILD_SHARED_LIBS)
 			sentry_install(TARGETS breakpad_client EXPORT sentry
 				LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
@@ -536,6 +575,10 @@ if(SENTRY_BUILD_EXAMPLES)
 	# set static runtime if enabled
 	if(SENTRY_BUILD_RUNTIMESTATIC AND MSVC)
 		set_property(TARGET sentry_example PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+	endif()
+
+	if(DEFINED SENTRY_FOLDER)
+		set_target_properties(sentry_example PROPERTIES FOLDER ${SENTRY_FOLDER})
 	endif()
 
 	add_test(NAME sentry_example COMMAND sentry_example)
