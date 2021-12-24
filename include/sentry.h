@@ -24,7 +24,7 @@ extern "C" {
 
 /* SDK Version */
 #define SENTRY_SDK_NAME "sentry.native"
-#define SENTRY_SDK_VERSION "0.4.12"
+#define SENTRY_SDK_VERSION "0.4.13"
 #define SENTRY_SDK_USER_AGENT SENTRY_SDK_NAME "/" SENTRY_SDK_VERSION
 
 /* common platform detection */
@@ -45,6 +45,10 @@ extern "C" {
 #    define SENTRY_PLATFORM_UNIX
 #elif defined(__linux) || defined(__linux__)
 #    define SENTRY_PLATFORM_LINUX
+#    define SENTRY_PLATFORM_UNIX
+#elif defined(_AIX)
+/* IBM i PASE is also counted as AIX */
+#    define SENTRY_PLATFORM_AIX
 #    define SENTRY_PLATFORM_UNIX
 #else
 #    error unsupported platform
@@ -189,7 +193,7 @@ SENTRY_API sentry_value_t sentry_value_new_int32(int32_t value);
 SENTRY_API sentry_value_t sentry_value_new_double(double value);
 
 /**
- * Creates a new boolen value.
+ * Creates a new boolean value.
  */
 SENTRY_API sentry_value_t sentry_value_new_bool(int value);
 
@@ -550,11 +554,19 @@ typedef struct sentry_envelope_s sentry_envelope_t;
 SENTRY_API void sentry_envelope_free(sentry_envelope_t *envelope);
 
 /**
- * Given an envelope returns the embedded event if there is one.
+ * Given an Envelope, returns the embedded Event if there is one.
  *
- * This returns a borrowed value to the event in the envelope.
+ * This returns a borrowed value to the Event in the Envelope.
  */
 SENTRY_API sentry_value_t sentry_envelope_get_event(
+    const sentry_envelope_t *envelope);
+
+/**
+ * Given an Envelope, returns the embedded Transaction if there is one.
+ *
+ * This returns a borrowed value to the Transaction in the Envelope.
+ */
+SENTRY_EXPERIMENTAL_API sentry_value_t sentry_envelope_get_transaction(
     const sentry_envelope_t *envelope);
 
 /**
@@ -578,7 +590,7 @@ SENTRY_API int sentry_envelope_write_to_file(
 /**
  * The Sentry Client Options.
  *
- * See https://docs.sentry.io/error-reporting/configuration/
+ * See https://docs.sentry.io/platforms/native/configuration/
  */
 struct sentry_options_s;
 typedef struct sentry_options_s sentry_options_t;
@@ -1137,7 +1149,8 @@ SENTRY_API void sentry_user_consent_reset(void);
 SENTRY_API sentry_user_consent_t sentry_user_consent_get(void);
 
 /**
- * Sends a sentry event.
+ * Sends a sentry event. Returns a nil UUID if the event being passed in is a
+ * transaction; `sentry_transaction_finish` should be used to send transactions.
  */
 SENTRY_API sentry_uuid_t sentry_capture_event(sentry_value_t event);
 
@@ -1231,6 +1244,111 @@ SENTRY_API void sentry_start_session(void);
  * Ends a session.
  */
 SENTRY_API void sentry_end_session(void);
+
+/**
+ * Sets the maximum number of spans that can be attached to a
+ * transaction.
+ */
+SENTRY_EXPERIMENTAL_API void sentry_options_set_max_spans(
+    sentry_options_t *opts, size_t max_spans);
+
+/**
+ * Gets the maximum number of spans that can be attached to a
+ * transaction.
+ */
+SENTRY_EXPERIMENTAL_API size_t sentry_options_get_max_spans(
+    sentry_options_t *opts);
+
+/**
+ * Sets the sample rate for transactions. Should be a double between
+ * `0.0` and `1.0`. Transactions will be randomly discarded during
+ * `sentry_transaction_finish` when the sample rate is < 1.0.
+ */
+SENTRY_EXPERIMENTAL_API void sentry_options_set_traces_sample_rate(
+    sentry_options_t *opts, double sample_rate);
+
+/**
+ * Returns the sample rate for transactions.
+ */
+SENTRY_EXPERIMENTAL_API double sentry_options_get_traces_sample_rate(
+    sentry_options_t *opts);
+
+/* -- Performance Monitoring/Tracing APIs -- */
+
+/**
+ * Constructs a new Transaction Context. The returned value needs to be passed
+ * into `sentry_transaction_start` in order to be recorded and sent to sentry.
+ *
+ * See
+ * https://docs.sentry.io/platforms/native/enriching-events/transaction-name/
+ * for an explanation of a Transaction's `name`, and
+ * https://develop.sentry.dev/sdk/performance/span-operations/ for conventions
+ * around an `operation`'s value.
+ *
+ * Also see https://develop.sentry.dev/sdk/event-payloads/transaction/#anatomy
+ * for an explanation of `operation`, in addition to other properties and
+ * actions that can be performed on a Transaction.
+ */
+SENTRY_EXPERIMENTAL_API sentry_value_t sentry_value_new_transaction_context(
+    const char *name, const char *operation);
+
+/**
+ * Sets the `name` on a Transaction Context, which will be used in the
+ * Transaction constructed off of the context.
+ */
+SENTRY_EXPERIMENTAL_API void sentry_transaction_context_set_name(
+    sentry_value_t transaction, const char *name);
+
+/**
+ * Sets the `operation` on a Transaction Context, which will be used in the
+ * Transaction constructed off of the context
+ *
+ * See https://develop.sentry.dev/sdk/performance/span-operations/ for
+ * conventions on `operation`s.
+ */
+SENTRY_EXPERIMENTAL_API void sentry_transaction_context_set_operation(
+    sentry_value_t transaction, const char *operation);
+
+/**
+ * Sets the `sampled` field on a Transaction Context, which will be used in the
+ * Transaction constructed off of the context.
+ *
+ * When passed any value above 0, the Transaction will bypass all sampling
+ * options and always be sent to sentry. If passed 0, this Transaction and its
+ * child spans will never be sent to sentry.
+ */
+SENTRY_EXPERIMENTAL_API void sentry_transaction_context_set_sampled(
+    sentry_value_t transaction, int sampled);
+
+/**
+ * Removes the sampled field on a Transaction Context, which will be used in the
+ * Transaction constructed off of the context.
+ *
+ * The Transaction will use the sampling rate as defined in `sentry_options`.
+ */
+SENTRY_EXPERIMENTAL_API void sentry_transaction_context_remove_sampled(
+    sentry_value_t transaction);
+
+/**
+ * Starts a new Transaction based on the provided context, restored from an
+ * external integration (i.e. a span from a different SDK) or manually
+ * constructed by a user.
+ *
+ * Takes ownership of `transaction_context`.
+ */
+SENTRY_EXPERIMENTAL_API sentry_value_t sentry_transaction_start(
+    sentry_value_t transaction_context);
+
+/**
+ * Finishes and sends a transaction to sentry. The event ID of the transaction
+ * will be returned if this was successful; A nil UUID will be returned
+ * otherwise.
+ *
+ * Always takes ownership of `transaction`, regardless of whether the operation
+ * was successful or not.
+ */
+SENTRY_EXPERIMENTAL_API sentry_uuid_t sentry_transaction_finish(
+    sentry_value_t transaction);
 
 #ifdef __cplusplus
 }

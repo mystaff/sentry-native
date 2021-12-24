@@ -45,7 +45,14 @@ has_arg(int argc, char **argv, const char *arg)
     return false;
 }
 
+#ifdef SENTRY_PLATFORM_AIX
+// AIX has a null page mapped to the bottom of memory, which means null derefs
+// don't segfault. try dereferencing the top of memory instead; the top nibble
+// seems to be unusable.
+static void *invalid_mem = (void *)0xFFFFFFFFFFFFFF9B; // -100 for memset
+#else
 static void *invalid_mem = (void *)1;
+#endif
 
 static void
 trigger_crash()
@@ -84,6 +91,10 @@ main(int argc, char **argv)
     if (has_arg(argc, argv, "stdout")) {
         sentry_options_set_transport(
             options, sentry_transport_new(print_envelope));
+    }
+
+    if (has_arg(argc, argv, "capture-transaction")) {
+        sentry_options_set_traces_sample_rate(options, 1.0);
     }
 
     sentry_init(options);
@@ -199,6 +210,19 @@ main(int argc, char **argv)
         sentry_event_add_exception(event, exc);
 
         sentry_capture_event(event);
+    }
+
+    if (has_arg(argc, argv, "capture-transaction")) {
+        sentry_value_t tx_ctx
+            = sentry_value_new_transaction_context("I'm a little teapot",
+                "Short and stout here is my handle and here is my spout");
+
+        if (has_arg(argc, argv, "unsample-tx")) {
+            sentry_transaction_context_set_sampled(tx_ctx, 0);
+        }
+
+        sentry_value_t tx = sentry_transaction_start(tx_ctx);
+        sentry_transaction_finish(tx);
     }
 
     // make sure everything flushes
