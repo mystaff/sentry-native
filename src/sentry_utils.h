@@ -8,6 +8,7 @@
 #    include <mach/mach.h>
 #endif
 #ifdef SENTRY_PLATFORM_WINDOWS
+#    include "sentry_os.h"
 #    include <winnt.h>
 #else
 #    include <sys/time.h>
@@ -49,7 +50,7 @@ typedef struct sentry_dsn_s {
     char *path;
     char *secret_key;
     char *public_key;
-    uint64_t project_id;
+    char *project_id;
     int port;
     long refcount;
     bool is_valid;
@@ -63,6 +64,7 @@ typedef struct sentry_dsn_s {
  * DSN has been successfully parsed.
  */
 sentry_dsn_t *sentry__dsn_new(const char *dsn);
+sentry_dsn_t *sentry__dsn_new_n(const char *dsn, size_t raw_dsn_len);
 
 /**
  * Increases the reference-count of the DSN.
@@ -79,7 +81,8 @@ void sentry__dsn_decref(sentry_dsn_t *dsn);
  * described here:
  * https://docs.sentry.io/development/sdk-dev/overview/#authentication
  */
-char *sentry__dsn_get_auth_header(const sentry_dsn_t *dsn);
+char *sentry__dsn_get_auth_header(
+    const sentry_dsn_t *dsn, const char *user_agent);
 
 /**
  * Returns the envelope endpoint url used for normal uploads as a newly
@@ -91,32 +94,30 @@ char *sentry__dsn_get_envelope_url(const sentry_dsn_t *dsn);
  * Returns the minidump endpoint url used for uploads done by the out-of-process
  * crashpad backend as a newly allocated string.
  */
-char *sentry__dsn_get_minidump_url(const sentry_dsn_t *dsn);
+char *sentry__dsn_get_minidump_url(
+    const sentry_dsn_t *dsn, const char *user_agent);
 
 /**
- * Returns the number of milliseconds since the unix epoch.
+ * Returns the number of microseconds since the unix epoch.
  */
 static inline uint64_t
-sentry__msec_time(void)
+sentry__usec_time(void)
 {
 #ifdef SENTRY_PLATFORM_WINDOWS
     // Contains a 64-bit value representing the number of 100-nanosecond
     // intervals since January 1, 1601 (UTC).
     FILETIME file_time;
-    SYSTEMTIME system_time;
-    GetSystemTime(&system_time);
-    SystemTimeToFileTime(&system_time, &file_time);
-
+    sentry__get_system_time(&file_time);
     uint64_t timestamp = (uint64_t)file_time.dwLowDateTime
         + ((uint64_t)file_time.dwHighDateTime << 32);
     timestamp -= 116444736000000000LL; // convert to unix epoch
-    timestamp /= 10000LL; // 100ns -> 1ms
+    timestamp /= 10LL; // 100ns -> 1us
 
     return timestamp;
 #else
     struct timeval tv;
     return (gettimeofday(&tv, NULL) == 0)
-        ? (uint64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000
+        ? (uint64_t)tv.tv_sec * 1000000 + tv.tv_usec
         : 0;
 #endif
 }
@@ -177,16 +178,16 @@ sentry__monotonic_time(void)
 }
 
 /**
- * Formats a timestamp (milliseconds since epoch) into ISO8601 format.
+ * Formats a timestamp (microseconds since epoch) into ISO8601 format.
  */
-char *sentry__msec_time_to_iso8601(uint64_t time);
+char *sentry__usec_time_to_iso8601(uint64_t time);
 
 /**
- * Parses a ISO8601 formatted string into a millisecond resolution timestamp.
- * This only accepts the format `YYYY-MM-DD'T'hh:mm:ss(.zzz)'Z'`, which is
- * produced by the `sentry__msec_time_to_iso8601` function.
+ * Parses a ISO8601 formatted string into a microsecond resolution timestamp.
+ * This only accepts the format `YYYY-MM-DD'T'hh:mm:ss(.zzzzzz)'Z'`, which is
+ * produced by the `sentry__usec_time_to_iso8601` function.
  */
-uint64_t sentry__iso8601_to_msec(const char *iso);
+uint64_t sentry__iso8601_to_usec(const char *iso);
 
 /**
  * Locale independent (or rather, using "C" locale) `strtod`.
@@ -197,5 +198,21 @@ double sentry__strtod_c(const char *ptr, char **endptr);
  * Locale independent (or rather, using "C" locale) `snprintf`.
  */
 int sentry__snprintf_c(char *buf, size_t buf_size, const char *fmt, ...);
+
+/**
+ * Represents a version of a software artifact.
+ */
+typedef struct {
+    unsigned int major;
+    unsigned int minor;
+    unsigned int patch;
+} sentry_version_t;
+
+/**
+ * Checks whether `actual` is the same or a later version than `expected`.
+ * Returns `true` if that is the case.
+ */
+bool sentry__check_min_version(
+    sentry_version_t actual, sentry_version_t expected);
 
 #endif

@@ -14,14 +14,70 @@
 #endif
 #include <assert.h>
 
+#ifdef NDEBUG
+#    undef NDEBUG
+#endif
+
+#include <assert.h>
+
 #ifdef SENTRY_PLATFORM_WINDOWS
+#    include <malloc.h>
 #    include <synchapi.h>
-#    define sleep_s(SECONDS) Sleep((SECONDS)*1000)
+#    define sleep_s(SECONDS) Sleep((SECONDS) * 1000)
 #else
 #    include <signal.h>
 #    include <unistd.h>
+
 #    define sleep_s(SECONDS) sleep(SECONDS)
 #endif
+
+static sentry_value_t
+before_send_callback(sentry_value_t event, void *hint, void *closure)
+{
+    (void)hint;
+    (void)closure;
+
+    // make our mark on the event
+    sentry_value_set_by_key(
+        event, "adapted_by", sentry_value_new_string("before_send"));
+
+    // tell the backend to proceed with the event
+    return event;
+}
+
+static sentry_value_t
+discarding_before_send_callback(sentry_value_t event, void *hint, void *closure)
+{
+    (void)hint;
+    (void)closure;
+
+    // discard event and signal backend to stop further processing
+    sentry_value_decref(event);
+    return sentry_value_new_null();
+}
+
+static sentry_value_t
+discarding_on_crash_callback(
+    const sentry_ucontext_t *uctx, sentry_value_t event, void *closure)
+{
+    (void)uctx;
+    (void)closure;
+
+    // discard event and signal backend to stop further processing
+    sentry_value_decref(event);
+    return sentry_value_new_null();
+}
+
+static sentry_value_t
+on_crash_callback(
+    const sentry_ucontext_t *uctx, sentry_value_t event, void *closure)
+{
+    (void)uctx;
+    (void)closure;
+
+    // tell the backend to retain the event
+    return event;
+}
 
 static void
 print_envelope(sentry_envelope_t *envelope, void *unused_state)
@@ -45,6 +101,55 @@ has_arg(int argc, char **argv, const char *arg)
     return false;
 }
 
+#if defined(SENTRY_PLATFORM_WINDOWS) && !defined(__MINGW32__)                  \
+    && !defined(__MINGW64__)
+
+int
+call_rffe_many_times()
+{
+    RaiseFailFastException(NULL, NULL, 0);
+    RaiseFailFastException(NULL, NULL, 0);
+    RaiseFailFastException(NULL, NULL, 0);
+    RaiseFailFastException(NULL, NULL, 0);
+    return 1;
+}
+
+typedef int (*crash_func)();
+
+void
+indirect_call(crash_func func)
+{
+    // This code always generates CFG guards.
+    func();
+}
+
+static void
+trigger_stack_buffer_overrun()
+{
+    // Call into the middle of the Crashy function.
+    crash_func func = (crash_func)((uintptr_t)(call_rffe_many_times) + 16);
+    __try {
+        // Generates a STATUS_STACK_BUFFER_OVERRUN exception if CFG triggers.
+        indirect_call(func);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        // CFG fast fail should never be caught.
+        printf(
+            "If you see me, then CFG wasn't enabled (compile with /guard:cf)");
+    }
+    // Should only reach here if CFG is disabled.
+    abort();
+}
+
+static void
+trigger_fastfail_crash()
+{
+    // this bypasses WINDOWS SEH and will only be caught with the crashpad WER
+    // module enabled
+    __fastfail(77);
+}
+
+#endif
+
 #ifdef SENTRY_PLATFORM_AIX
 // AIX has a null page mapped to the bottom of memory, which means null derefs
 // don't segfault. try dereferencing the top of memory instead; the top nibble
@@ -60,10 +165,21 @@ trigger_crash()
     memset((char *)invalid_mem, 1, 100);
 }
 
+static void
+trigger_stack_overflow()
+{
+    alloca(1024);
+    trigger_stack_overflow();
+}
+
 int
 main(int argc, char **argv)
 {
     sentry_options_t *options = sentry_options_new();
+
+    if (has_arg(argc, argv, "disable-backend")) {
+        sentry_options_set_backend(options, NULL);
+    }
 
     // this is an example. for real usage, make sure to set this explicitly to
     // an app specific cache location.
@@ -95,6 +211,32 @@ main(int argc, char **argv)
 
     if (has_arg(argc, argv, "capture-transaction")) {
         sentry_options_set_traces_sample_rate(options, 1.0);
+    }
+
+    if (has_arg(argc, argv, "child-spans")) {
+        sentry_options_set_max_spans(options, 5);
+    }
+
+    if (has_arg(argc, argv, "before-send")) {
+        sentry_options_set_before_send(options, before_send_callback, NULL);
+    }
+
+    if (has_arg(argc, argv, "discarding-before-send")) {
+        sentry_options_set_before_send(
+            options, discarding_before_send_callback, NULL);
+    }
+
+    if (has_arg(argc, argv, "on-crash")) {
+        sentry_options_set_on_crash(options, on_crash_callback, NULL);
+    }
+
+    if (has_arg(argc, argv, "discarding-on-crash")) {
+        sentry_options_set_on_crash(
+            options, discarding_on_crash_callback, NULL);
+    }
+
+    if (has_arg(argc, argv, "override-sdk-name")) {
+        sentry_options_set_sdk_name(options, "sentry.native.android.flutter");
     }
 
     sentry_init(options);
@@ -133,6 +275,21 @@ main(int argc, char **argv)
             debug_crumb, "category", sentry_value_new_string("example!"));
         sentry_value_set_by_key(
             debug_crumb, "level", sentry_value_new_string("debug"));
+
+        // extend the `http` crumb with (optional) data properties as documented
+        // here:
+        // https://develop.sentry.dev/sdk/event-payloads/breadcrumbs/#breadcrumb-types
+        sentry_value_t http_data = sentry_value_new_object();
+        sentry_value_set_by_key(http_data, "url",
+            sentry_value_new_string("https://example.com/api/1.0/users"));
+        sentry_value_set_by_key(
+            http_data, "method", sentry_value_new_string("GET"));
+        sentry_value_set_by_key(
+            http_data, "status_code", sentry_value_new_int32(200));
+        sentry_value_set_by_key(
+            http_data, "reason", sentry_value_new_string("OK"));
+        sentry_value_set_by_key(debug_crumb, "data", http_data);
+
         sentry_add_breadcrumb(debug_crumb);
 
         sentry_value_t nl_crumb
@@ -176,6 +333,18 @@ main(int argc, char **argv)
     if (has_arg(argc, argv, "crash")) {
         trigger_crash();
     }
+    if (has_arg(argc, argv, "stack-overflow")) {
+        trigger_stack_overflow();
+    }
+#if defined(SENTRY_PLATFORM_WINDOWS) && !defined(__MINGW32__)                  \
+    && !defined(__MINGW64__)
+    if (has_arg(argc, argv, "fastfail")) {
+        trigger_fastfail_crash();
+    }
+    if (has_arg(argc, argv, "stack-buffer-overrun")) {
+        trigger_stack_buffer_overrun();
+    }
+#endif
     if (has_arg(argc, argv, "assert")) {
         assert(0);
     }
@@ -203,13 +372,67 @@ main(int argc, char **argv)
         sentry_value_t exc = sentry_value_new_exception(
             "ParseIntError", "invalid digit found in string");
         if (has_arg(argc, argv, "add-stacktrace")) {
-            sentry_value_t stacktrace = sentry_value_new_stacktrace(NULL, 0);
-            sentry_value_set_by_key(exc, "stacktrace", stacktrace);
+            sentry_value_set_stacktrace(exc, NULL, 0);
         }
         sentry_value_t event = sentry_value_new_event();
         sentry_event_add_exception(event, exc);
 
         sentry_capture_event(event);
+    }
+    if (has_arg(argc, argv, "capture-user-feedback")) {
+        sentry_value_t event = sentry_value_new_message_event(
+            SENTRY_LEVEL_INFO, "my-logger", "Hello user feedback!");
+        sentry_uuid_t event_id = sentry_capture_event(event);
+
+        sentry_value_t user_feedback = sentry_value_new_user_feedback(
+            &event_id, "some-name", "some-email", "some-comment");
+
+        sentry_capture_user_feedback(user_feedback);
+    }
+
+    if (has_arg(argc, argv, "capture-transaction")) {
+        sentry_transaction_context_t *tx_ctx
+            = sentry_transaction_context_new("little.teapot",
+                "Short and stout here is my handle and here is my spout");
+
+        if (has_arg(argc, argv, "unsample-tx")) {
+            sentry_transaction_context_set_sampled(tx_ctx, 0);
+        }
+        sentry_transaction_t *tx
+            = sentry_transaction_start(tx_ctx, sentry_value_new_null());
+
+        sentry_transaction_set_data(
+            tx, "url", sentry_value_new_string("https://example.com"));
+
+        if (has_arg(argc, argv, "error-status")) {
+            sentry_transaction_set_status(
+                tx, SENTRY_SPAN_STATUS_INTERNAL_ERROR);
+        }
+
+        if (has_arg(argc, argv, "child-spans")) {
+            sentry_span_t *child
+                = sentry_transaction_start_child(tx, "littler.teapot", NULL);
+            sentry_span_t *grandchild
+                = sentry_span_start_child(child, "littlest.teapot", NULL);
+
+            sentry_span_set_data(
+                child, "span_data_says", sentry_value_new_string("hi!"));
+
+            if (has_arg(argc, argv, "error-status")) {
+                sentry_span_set_status(child, SENTRY_SPAN_STATUS_NOT_FOUND);
+                sentry_span_set_status(
+                    grandchild, SENTRY_SPAN_STATUS_ALREADY_EXISTS);
+            }
+
+            sentry_span_finish(grandchild);
+            sentry_span_finish(child);
+        }
+
+        sentry_transaction_finish(tx);
+    }
+
+    if (has_arg(argc, argv, "capture-minidump")) {
+        sentry_capture_minidump("minidump.dmp");
     }
 
     if (has_arg(argc, argv, "capture-transaction")) {

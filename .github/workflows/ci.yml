@@ -5,13 +5,19 @@ on:
     branches:
       - timedoctor
   pull_request:
+    paths-ignore:
+      - "*.md"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - run: make style
 
   create-release:
@@ -19,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: lint
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
       - name: Get Version
         env:
@@ -60,36 +66,106 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Linux (gcc 10)
+          - name: Linux (GCC 7, 32-bit)
             os: ubuntu-20.04
-            CC: gcc-10
-            CXX: g++-10
-          - name: macOS (xcode)
-            os: macOs-latest
+            CC: gcc-7
+            CXX: g++-7
+            TEST_X86: 1
+          - name: Linux (GCC 12)
+            os: ubuntu-22.04
+            CC: gcc-12
+            CXX: g++-12
+            # ERROR_ON_WARNINGS: 1
+            # The GCC analyzer 10.0.1 (as on CI) has an internal compiler error
+            # currently, and is not stable enough to activate.
+            # RUN_ANALYZER: gcc
+          - name: Linux (clang 15 + asan + llvm-cov)
+            os: ubuntu-22.04
+            CC: clang-15
+            CXX: clang++-15
             ERROR_ON_WARNINGS: 1
-          - name: Windows (VS2017, 32bit)
-            os: vs2017-win2016
+            RUN_ANALYZER: asan,llvm-cov
+          - name: Linux (clang 15 + kcov)
+            os: ubuntu-22.04
+            CC: clang-15
+            CXX: clang++-15
+            ERROR_ON_WARNINGS: 1
+            RUN_ANALYZER: kcov
+          - name: Linux (gcc 12 + code-checker + valgrind)
+            os: ubuntu-22.04
+            RUN_ANALYZER: code-checker,valgrind
+          - name: macOS 14 (xcode llvm)
+            os: macos-14
+            ERROR_ON_WARNINGS: 1
+            SYSTEM_VERSION_COMPAT: 0
+          - name: macOS 13 (xcode llvm)
+            os: macos-13
+            ERROR_ON_WARNINGS: 1
+            SYSTEM_VERSION_COMPAT: 0
+          - name: macOS 14 (xcode llvm + universal)
+            os: macos-14
+            ERROR_ON_WARNINGS: 1
+            SYSTEM_VERSION_COMPAT: 0
+            CMAKE_DEFINES: -DCMAKE_OSX_ARCHITECTURES=arm64;x86_64
+          - name: macOS 15 (clang 18 + asan + llvm-cov)
+            os: macos-15-large
+            CC: clang
+            CXX: clang++
+            ERROR_ON_WARNINGS: 1
+            SYSTEM_VERSION_COMPAT: 0
+            RUN_ANALYZER: asan,llvm-cov
+          - name: Windows (old VS, 32-bit)
+            os: windows-2019
+            TEST_X86: 1
           - name: Windows (latest)
             os: windows-latest
+          - name: LLVM-Mingw
+            os: windows-latest
+            TEST_MINGW: 1
+            MINGW_PKG_PREFIX: x86_64-w64-mingw32
+            MINGW_ASM_MASM_COMPILER: llvm-ml;-m64
+          # The Android emulator is currently only available on macos, see:
+          # https://docs.microsoft.com/en-us/azure/devops/pipelines/ecosystems/android?view=azure-devops#test-on-the-android-emulator
+          # TODO: switch to reactivecircus/android-emulator-runner, concurrently running emulators continuously fail now.
+          # - name: Android (API 31, NDK 23)
+          #   os: macos-15-large
+          #   ANDROID_API: 31
+          #   ANDROID_NDK: 23.2.8568313
+          #   ANDROID_ARCH: x86_64
+          - name: Android (API 35, NDK 27)
+            os: macos-15-large
+            ANDROID_API: 35
+            ANDROID_NDK: 27.2.12479018
+            ANDROID_ARCH: x86_64
 
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
 
     env:
+      TEST_X86: ${{ matrix.TEST_X86 }}
+      TEST_MINGW: ${{ matrix.TEST_MINGW }}
       ERROR_ON_WARNINGS: ${{ matrix.ERROR_ON_WARNINGS }}
+      RUN_ANALYZER: ${{ matrix.RUN_ANALYZER }}
+      ANDROID_API: ${{ matrix.ANDROID_API }}
+      ANDROID_NDK: ${{ matrix.ANDROID_NDK }}
+      ANDROID_ARCH: ${{ matrix.ANDROID_ARCH }}
+      CMAKE_DEFINES: ${{ matrix.CMAKE_DEFINES }}
+      SYSTEM_VERSION_COMPAT: ${{ matrix.SYSTEM_VERSION_COMPAT }}
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - uses: actions/setup-python@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
 
       - name: Installing Linux Dependencies
-        if: ${{ runner.os == 'Linux' }}
-        # workaround: https://github.com/actions/virtual-environments/issues/1536#issuecomment-698537248
+        if: ${{ runner.os == 'Linux' && !env['TEST_X86'] }}
         run: |
           sudo apt update
-          sudo apt install cmake clang-11 clang-tools g++-10 zlib1g-dev libcurl4-openssl-dev
+          sudo apt install cmake clang-14 clang-tools llvm kcov g++-12 valgrind zlib1g-dev libcurl4-openssl-dev
 
       - name: Building (Windows)
         if: ${{ runner.os == 'Windows' }}
@@ -97,79 +173,99 @@ jobs:
           MOS: ${{ matrix.os }}
         shell: bash
         run: |
-          if [[ -v MOS ]] && [[ $MOS == "vs2017-win2016" ]]; then ARCH=Win32; else ARCH=x64; fi
-          echo ARCH=$ARCH >> $GITHUB_ENV
-          cmake --version
-          cmake -B build-release -DSENTRY_BUILD_SHARED_LIBS=OFF -DCMAKE_SYSTEM_VERSION="10.0.18362.0" -DSENTRY_BACKEND=breakpad -A $ARCH
-          cmake --build build-release --config Release
-          cmake --install build-release --prefix release --config Release
-          cmake -B build-debug -DSENTRY_BUILD_SHARED_LIBS=OFF -DCMAKE_SYSTEM_VERSION="10.0.18362.0" -DSENTRY_BACKEND=breakpad -A $ARCH
-          cmake --build build-debug --parallel --config Debug
-          cmake --install build-debug --prefix debug --config Debug
+          sudo dpkg --add-architecture i386
+          sudo apt update
+          sudo apt install cmake gcc-7-multilib g++-7-multilib zlib1g-dev:i386 libssl-dev:i386 libcurl4-openssl-dev:i386
 
-      - name: Building (Linux)
-        if: ${{ runner.os == 'Linux' }}
-        shell: bash
-        run: |
-          cmake --version
-          cmake -B build -DSENTRY_BUILD_SHARED_LIBS=OFF -DSENTRY_BACKEND=breakpad
-          cmake --build build --parallel --config Release
-          cmake --install build --prefix install --config Release
+        # https://github.com/actions/runner-images/issues/9491
+      - name: Decrease vm.mmap_rnd_bit to prevent ASLR ASAN issues
+        if: ${{ runner.os == 'Linux' && contains(env['RUN_ANALYZER'], 'asan') }}
+        run: sudo sysctl vm.mmap_rnd_bits=28
 
-      - name: Select Xcode Version
+      - name: Installing CodeChecker
+        if: ${{ contains(env['RUN_ANALYZER'], 'code-checker') }}
+        run: sudo snap install codechecker --classic
+
+      - name: Expose llvm@15 PATH for Mac
         if: ${{ runner.os == 'macOS' }}
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: '13.0.0'
+        run: echo $(brew --prefix llvm@15)/bin >> $GITHUB_PATH
 
-      - name: Building (macOS)
-        if: ${{ runner.os == 'macOS' }}
-        shell: bash
-        run: |
-          cmake --version
-          cmake -B build -DSENTRY_BUILD_SHARED_LIBS=OFF -DSENTRY_BACKEND=crashpad
-          cmake --build build --parallel --config Release
-          cmake --install build --prefix install --config Release
+      - name: Expose llvm@18 PATH for Mac
+        if: ${{ runner.os == 'macOS' && matrix.os == 'macos-15-large' && matrix.RUN_ANALYZER == 'asan,llvm-cov' }}
+        run: echo $(brew --prefix llvm@18)/bin >> $GITHUB_PATH
 
-      - name: Zip Release (Windows)
+      - name: Installing LLVM-MINGW Dependencies
+        if: ${{ runner.os == 'Windows' && env['TEST_MINGW'] }}
+        shell: powershell
+        env:
+          MINGW_PKG_PREFIX: ${{ matrix.MINGW_PKG_PREFIX }}
+          MINGW_ASM_MASM_COMPILER: ${{ matrix.MINGW_ASM_MASM_COMPILER }}
+        run: . "scripts\install-llvm-mingw.ps1"
+
+      - name: Set up zlib for Windows
         if: ${{ runner.os == 'Windows' }}
+        shell: powershell
+        run: . "scripts\install-zlib.ps1"
+
+      - name: Starting Android Simulator
+        if: ${{ env['ANDROID_API'] }}
+        run: bash scripts/start-android.sh
+        timeout-minutes: 20
+
+      - name: Test
         shell: bash
         run: |
-          rm -rf ./release/include
-          rm -rf ./debug/include
-          mv ./release/lib ./release/release
-          mv ./release ./lib
-          mv ./debug/lib ./lib/debug
-          powershell Compress-Archive ./lib sentry-native.zip
-          powershell Compress-Archive ./include -Update sentry-native.zip
+          pip install --upgrade --requirement tests/requirements.txt
+          [ "${{ matrix.CC }}" ] && export CC="${{ matrix.CC }}"
+          [ "${{ matrix.CXX }}" ] && export CXX="${{ matrix.CXX }}"
+          pytest --capture=no --verbose tests
 
-      - name: Zip Release (Unix)
-        if: ${{ runner.os == 'macOS' || runner.os == 'Linux' }}
-        shell: bash
-        run: |
-          cd install && zip -r ../sentry-native.zip . && cd ..
+      - name: "Upload to codecov.io"
+        if: ${{ contains(env['RUN_ANALYZER'], 'cov') }}
+        uses: codecov/codecov-action@e28ff129e5465c2c0dcc6f003fc735cb6ae0c673 # pin@v4.5.0
+        with:
+          directory: coverage
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+          verbose: true
 
-      - name: Download Upload Url
-        uses: actions/download-artifact@v2
+  archive:
+    name: Create Release Archive
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    # only run this on pushes, combined with the CI triggers, this will only
+    # run on master or the release branch
+    if: ${{ needs.test.result == 'success' && github.event_name == 'push' }}
+    steps:
+      - uses: actions/checkout@v4
         with:
           name: upload_url
 
-      - name: Setup Environment
-        shell: bash
-        run: |
-          TAG=$(cat TAG)
-          URL=$(cat UPLOAD_URL)
-          echo TAG=$TAG >> $GITHUB_ENV
-          echo URL=$URL >> $GITHUB_ENV
-
-      - name: Upload Release Asset
-        id: upload-release-asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Setup Java Version
+        uses: actions/setup-java@v4
         with:
-          upload_url: ${{ env.URL }}
-          asset_path: './sentry-native.zip'
-          asset_name: 'sentry-native-${{ env.TAG }}-${{ runner.os }}${{ env.ARCH }}.zip'
-          asset_content_type: application/zip
+          distribution: "temurin"
+          java-version: "17"
 
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@579fbbe7221704325eb4c4d4bf20c2b0859fba76 # pin@v3
+        with:
+          gradle-home-cache-cleanup: true
+
+      - name: Create source archive
+        run: |
+          rm -rf build .c* .e* .git* scripts Makefile external/breakpad/src/tools external/breakpad/src/processor
+          zip -r sentry-native.zip .
+
+      - name: Build NDK artifacts
+        working-directory: ndk
+        run: ./gradlew clean distZip
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            ndk/lib/build/distributions/*.zip
+            sentry-native.zip

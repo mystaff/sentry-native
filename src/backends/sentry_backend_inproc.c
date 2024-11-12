@@ -6,6 +6,9 @@
 #include "sentry_database.h"
 #include "sentry_envelope.h"
 #include "sentry_options.h"
+#if defined(SENTRY_PLATFORM_WINDOWS)
+#    include "sentry_os.h"
+#endif
 #include "sentry_scope.h"
 #include "sentry_sync.h"
 #include "sentry_transport.h"
@@ -13,10 +16,28 @@
 #include "transports/sentry_disk_transport.h"
 #include <string.h>
 
-#define SIGNAL_DEF(Sig, Desc)                                                  \
-    {                                                                          \
-        Sig, #Sig, Desc                                                        \
-    }
+/**
+ * Android's bionic libc seems to allocate alternate signal handler stacks for
+ * every thread and also references them from their internal maintenance
+ * structs.
+ *
+ * The way we currently set up our sigaltstack seems to interfere with this
+ * setup and causes crashes whenever an ART signal handler touches the thread
+ * that called `sentry_init()`.
+ *
+ * In addition to this problem, it also means there is no need for our own
+ * sigaltstack on Android since our signal handler will always be running on
+ * an alternate stack managed by bionic.
+ *
+ * Note: In bionic the sigaltstacks for 32-bit devices have a size of 16KiB and
+ * on 64-bit devices they have 32KiB. The size of our own was set to 64KiB
+ * independent of the device. If this is a problem, we need figure out
+ * together with Google if there is a way in which our configs can coexist.
+ *
+ * Both breakpad and crashpad are way more defensive in the setup of their
+ * signal stacks and take existing stacks into account (or reuse them).
+ */
+#define SIGNAL_DEF(Sig, Desc) { Sig, #Sig, Desc }
 
 #define MAX_FRAMES 128
 
@@ -32,8 +53,7 @@ struct signal_slot {
 #    define SIGNAL_STACK_SIZE 65536
 static struct sigaction g_sigaction;
 static struct sigaction g_previous_handlers[SIGNAL_COUNT];
-static stack_t g_signal_stack;
-
+static stack_t g_signal_stack = { 0 };
 static const struct signal_slot SIGNAL_DEFINITIONS[SIGNAL_COUNT] = {
     SIGNAL_DEF(SIGILL, "IllegalInstruction"),
     SIGNAL_DEF(SIGTRAP, "Trap"),
@@ -86,15 +106,24 @@ startup_inproc_backend(
         }
     }
 
-    // install our own signal handler
-    g_signal_stack.ss_sp = sentry_malloc(SIGNAL_STACK_SIZE);
-    if (!g_signal_stack.ss_sp) {
-        return 1;
+    // set up an alternate signal stack if noone defined one before
+    stack_t old_sig_stack;
+    if (sigaltstack(NULL, &old_sig_stack) == -1 || old_sig_stack.ss_sp == NULL
+        || old_sig_stack.ss_size == 0) {
+        SENTRY_TRACEF("installing signal stack (size: %d)", SIGNAL_STACK_SIZE);
+        g_signal_stack.ss_sp = sentry_malloc(SIGNAL_STACK_SIZE);
+        if (!g_signal_stack.ss_sp) {
+            return 1;
+        }
+        g_signal_stack.ss_size = SIGNAL_STACK_SIZE;
+        g_signal_stack.ss_flags = 0;
+        sigaltstack(&g_signal_stack, 0);
+    } else {
+        SENTRY_TRACEF(
+            "using existing signal stack (size: %d)", old_sig_stack.ss_size);
     }
-    g_signal_stack.ss_size = SIGNAL_STACK_SIZE;
-    g_signal_stack.ss_flags = 0;
-    sigaltstack(&g_signal_stack, 0);
 
+    // install our own signal handler
     sigemptyset(&g_sigaction.sa_mask);
     g_sigaction.sa_sigaction = handle_signal;
     g_sigaction.sa_flags = SA_SIGINFO | SA_ONSTACK;
@@ -107,14 +136,17 @@ startup_inproc_backend(
 static void
 shutdown_inproc_backend(sentry_backend_t *UNUSED(backend))
 {
-    g_signal_stack.ss_flags = SS_DISABLE;
-    sigaltstack(&g_signal_stack, 0);
-    sentry_free(g_signal_stack.ss_sp);
-    g_signal_stack.ss_sp = NULL;
+    if (g_signal_stack.ss_sp) {
+        g_signal_stack.ss_flags = SS_DISABLE;
+        sigaltstack(&g_signal_stack, 0);
+        sentry_free(g_signal_stack.ss_sp);
+        g_signal_stack.ss_sp = NULL;
+    }
     reset_signal_handlers();
 }
 
-#elif defined SENTRY_PLATFORM_WINDOWS
+#elif defined(SENTRY_PLATFORM_WINDOWS)
+
 struct signal_slot {
     DWORD signum;
     const char *signame;
@@ -154,6 +186,7 @@ static int
 startup_inproc_backend(
     sentry_backend_t *UNUSED(backend), const sentry_options_t *UNUSED(options))
 {
+    sentry__reserve_thread_stack();
     g_previous_handler = SetUnhandledExceptionFilter(&handle_exception);
     SetErrorMode(SEM_FAILCRITICALERRORS);
     return 0;
@@ -168,7 +201,272 @@ shutdown_inproc_backend(sentry_backend_t *UNUSED(backend))
         SetUnhandledExceptionFilter(current_handler);
     }
 }
+
 #endif
+
+sentry_value_t
+sentry__registers_from_uctx(const sentry_ucontext_t *uctx)
+{
+    sentry_value_t registers = sentry_value_new_object();
+
+#if defined(SENTRY_PLATFORM_LINUX)
+
+    // just assume the ctx is a bunch of uintpr_t, and index that directly
+    uintptr_t *ctx = (uintptr_t *)&uctx->user_context->uc_mcontext;
+
+#    define SET_REG(name, num)                                                 \
+        sentry_value_set_by_key(registers, name,                               \
+            sentry__value_new_addr((uint64_t)(size_t)ctx[num]));
+
+#    if defined(__x86_64__)
+
+    SET_REG("r8", 0);
+    SET_REG("r9", 1);
+    SET_REG("r10", 2);
+    SET_REG("r11", 3);
+    SET_REG("r12", 4);
+    SET_REG("r13", 5);
+    SET_REG("r14", 6);
+    SET_REG("r15", 7);
+    SET_REG("rdi", 8);
+    SET_REG("rsi", 9);
+    SET_REG("rbp", 10);
+    SET_REG("rbx", 11);
+    SET_REG("rdx", 12);
+    SET_REG("rax", 13);
+    SET_REG("rcx", 14);
+    SET_REG("rsp", 15);
+    SET_REG("rip", 16);
+
+#    elif defined(__i386__)
+
+    // gs, fs, es, ds
+    SET_REG("edi", 4);
+    SET_REG("esi", 5);
+    SET_REG("ebp", 6);
+    SET_REG("esp", 7);
+    SET_REG("ebx", 8);
+    SET_REG("edx", 9);
+    SET_REG("ecx", 10);
+    SET_REG("eax", 11);
+    SET_REG("eip", 14);
+    SET_REG("eflags", 16);
+
+#    elif defined(__aarch64__)
+
+    // 0 is `fault_address`
+    SET_REG("x0", 1);
+    SET_REG("x1", 2);
+    SET_REG("x2", 3);
+    SET_REG("x3", 4);
+    SET_REG("x4", 5);
+    SET_REG("x5", 6);
+    SET_REG("x6", 7);
+    SET_REG("x7", 8);
+    SET_REG("x8", 9);
+    SET_REG("x9", 10);
+    SET_REG("x10", 11);
+    SET_REG("x11", 12);
+    SET_REG("x12", 13);
+    SET_REG("x13", 14);
+    SET_REG("x14", 15);
+    SET_REG("x15", 16);
+    SET_REG("x16", 17);
+    SET_REG("x17", 18);
+    SET_REG("x18", 19);
+    SET_REG("x19", 20);
+    SET_REG("x20", 21);
+    SET_REG("x21", 22);
+    SET_REG("x22", 23);
+    SET_REG("x23", 24);
+    SET_REG("x24", 25);
+    SET_REG("x25", 26);
+    SET_REG("x26", 27);
+    SET_REG("x27", 28);
+    SET_REG("x28", 29);
+    SET_REG("fp", 30);
+    SET_REG("lr", 31);
+    SET_REG("sp", 32);
+    SET_REG("pc", 33);
+
+#    elif defined(__arm__)
+
+    // trap_no, _error_code, oldmask
+    SET_REG("r0", 3);
+    SET_REG("r1", 4);
+    SET_REG("r2", 5);
+    SET_REG("r3", 6);
+    SET_REG("r4", 7);
+    SET_REG("r5", 8);
+    SET_REG("r6", 9);
+    SET_REG("r7", 10);
+    SET_REG("r8", 11);
+    SET_REG("r9", 12);
+    SET_REG("r10", 13);
+    SET_REG("fp", 14);
+    SET_REG("ip", 15);
+    SET_REG("sp", 16);
+    SET_REG("lr", 17);
+    SET_REG("pc", 18);
+
+#    endif
+
+#    undef SET_REG
+
+#elif defined(SENTRY_PLATFORM_DARWIN)
+
+#    define SET_REG(name, prop)                                                \
+        sentry_value_set_by_key(registers, name,                               \
+            sentry__value_new_addr((uint64_t)(size_t)thread_state->prop));
+
+#    if defined(__x86_64__)
+
+    _STRUCT_X86_THREAD_STATE64 *thread_state
+        = &uctx->user_context->uc_mcontext->__ss;
+
+    SET_REG("rax", __rax);
+    SET_REG("rbx", __rbx);
+    SET_REG("rcx", __rcx);
+    SET_REG("rdx", __rdx);
+    SET_REG("rdi", __rdi);
+    SET_REG("rsi", __rsi);
+    SET_REG("rbp", __rbp);
+    SET_REG("rsp", __rsp);
+    SET_REG("r8", __r8);
+    SET_REG("r9", __r9);
+    SET_REG("r10", __r10);
+    SET_REG("r11", __r11);
+    SET_REG("r12", __r12);
+    SET_REG("r13", __r13);
+    SET_REG("r14", __r14);
+    SET_REG("r15", __r15);
+    SET_REG("rip", __rip);
+
+#    elif defined(__arm64__)
+
+    _STRUCT_ARM_THREAD_STATE64 *thread_state
+        = &uctx->user_context->uc_mcontext->__ss;
+
+    SET_REG("x0", __x[0]);
+    SET_REG("x1", __x[1]);
+    SET_REG("x2", __x[2]);
+    SET_REG("x3", __x[3]);
+    SET_REG("x4", __x[4]);
+    SET_REG("x5", __x[5]);
+    SET_REG("x6", __x[6]);
+    SET_REG("x7", __x[7]);
+    SET_REG("x8", __x[8]);
+    SET_REG("x9", __x[9]);
+    SET_REG("x10", __x[10]);
+    SET_REG("x11", __x[11]);
+    SET_REG("x12", __x[12]);
+    SET_REG("x13", __x[13]);
+    SET_REG("x14", __x[14]);
+    SET_REG("x15", __x[15]);
+    SET_REG("x16", __x[16]);
+    SET_REG("x17", __x[17]);
+    SET_REG("x18", __x[18]);
+    SET_REG("x19", __x[19]);
+    SET_REG("x20", __x[20]);
+    SET_REG("x21", __x[21]);
+    SET_REG("x22", __x[22]);
+    SET_REG("x23", __x[23]);
+    SET_REG("x24", __x[24]);
+    SET_REG("x25", __x[25]);
+    SET_REG("x26", __x[26]);
+    SET_REG("x27", __x[27]);
+    SET_REG("x28", __x[28]);
+    SET_REG("fp", __fp);
+    SET_REG("lr", __lr);
+    SET_REG("sp", __sp);
+    SET_REG("pc", __pc);
+
+#    elif defined(__arm__)
+
+    _STRUCT_ARM_THREAD_STATE *thread_state
+        = &uctx->user_context->uc_mcontext->__ss;
+
+    SET_REG("r0", __r[0]);
+    SET_REG("r1", __r[1]);
+    SET_REG("r2", __r[2]);
+    SET_REG("r3", __r[3]);
+    SET_REG("r4", __r[4]);
+    SET_REG("r5", __r[5]);
+    SET_REG("r6", __r[6]);
+    SET_REG("r7", __r[7]);
+    SET_REG("r8", __r[8]);
+    SET_REG("r9", __r[9]);
+    SET_REG("r10", __r[10]);
+    SET_REG("fp", __r[11]);
+    SET_REG("ip", __r[12]);
+    SET_REG("sp", __sp);
+    SET_REG("lr", __lr);
+    SET_REG("pc", __pc);
+
+#    endif
+
+#    undef SET_REG
+
+#elif defined(SENTRY_PLATFORM_WINDOWS)
+    PCONTEXT ctx = uctx->exception_ptrs.ContextRecord;
+
+#    define SET_REG(name, prop)                                                \
+        sentry_value_set_by_key(registers, name,                               \
+            sentry__value_new_addr((uint64_t)(size_t)ctx->prop));
+
+#    if defined(_M_AMD64)
+
+    if (ctx->ContextFlags & CONTEXT_INTEGER) {
+        SET_REG("rax", Rax);
+        SET_REG("rcx", Rcx);
+        SET_REG("rdx", Rdx);
+        SET_REG("rbx", Rbx);
+        SET_REG("rbp", Rbp);
+        SET_REG("rsi", Rsi);
+        SET_REG("rdi", Rdi);
+        SET_REG("r8", R8);
+        SET_REG("r9", R9);
+        SET_REG("r10", R10);
+        SET_REG("r11", R11);
+        SET_REG("r12", R12);
+        SET_REG("r13", R13);
+        SET_REG("r14", R14);
+        SET_REG("r15", R15);
+    }
+
+    if (ctx->ContextFlags & CONTEXT_CONTROL) {
+        SET_REG("rsp", Rsp);
+        SET_REG("rip", Rip);
+    }
+
+#    elif defined(_M_IX86)
+
+    if (ctx->ContextFlags & CONTEXT_INTEGER) {
+        SET_REG("edi", Edi);
+        SET_REG("esi", Esi);
+        SET_REG("ebx", Ebx);
+        SET_REG("edx", Edx);
+        SET_REG("ecx", Ecx);
+        SET_REG("eax", Eax);
+    }
+
+    if (ctx->ContextFlags & CONTEXT_CONTROL) {
+        SET_REG("ebp", Ebp);
+        SET_REG("eip", Eip);
+        SET_REG("eflags", EFlags);
+        SET_REG("esp", Esp);
+    }
+
+#    else
+    // _ARM64_
+#    endif
+
+#    undef SET_REG
+
+#endif
+
+    return registers;
+}
 
 static sentry_value_t
 make_signal_event(
@@ -206,6 +504,8 @@ make_signal_event(
     void *backtrace[MAX_FRAMES];
     size_t frame_count
         = sentry_unwind_stack_from_ucontext(uctx, &backtrace[0], MAX_FRAMES);
+    SENTRY_TRACEF(
+        "captured backtrace from ucontext with %lu frames", frame_count);
     // if unwinding from a ucontext didn't yield any results, try again with a
     // direct unwind. this is most likely the case when using `libbacktrace`,
     // since that does not allow to unwind from a ucontext at all.
@@ -217,8 +517,18 @@ make_signal_event(
     sentry_value_t stacktrace
         = sentry_value_new_stacktrace(&backtrace[0], frame_count);
 
-    sentry_value_set_by_key(exc, "stacktrace", stacktrace);
+    sentry_value_t registers = sentry__registers_from_uctx(uctx);
+    sentry_value_set_by_key(stacktrace, "registers", registers);
 
+#ifdef SENTRY_WITH_UNWINDER_LIBUNWINDSTACK
+    // libunwindstack already adjusts the PC according to `GetPcAdjustment()`
+    // https://github.com/getsentry/libunwindstack-ndk/blob/1929f7b601797fc8b2cac092d563b31d01d46a76/Regs.cpp#L187
+    // so there is no need to adjust the PC in the backend processing.
+    sentry_value_set_by_key(stacktrace, "instruction_addr_adjustment",
+        sentry_value_new_string("none"));
+#endif
+
+    sentry_value_set_by_key(exc, "stacktrace", stacktrace);
     sentry_event_add_exception(event, exc);
 
     return event;
@@ -258,21 +568,34 @@ handle_ucontext(const sentry_ucontext_t *uctx)
     SENTRY_WITH_OPTIONS (options) {
         sentry__write_crash_marker(options);
 
-        sentry_envelope_t *envelope
-            = sentry__prepare_event(options, event, NULL);
-        // TODO(tracing): Revisit when investigating transaction flushing during
-        // hard crashes.
+        bool should_handle = true;
 
-        sentry_session_t *session = sentry__end_current_session_with_status(
-            SENTRY_SESSION_STATUS_CRASHED);
-        sentry__envelope_add_session(envelope, session);
+        if (options->on_crash_func) {
+            SENTRY_TRACE("invoking `on_crash` hook");
+            event = options->on_crash_func(uctx, event, options->on_crash_data);
+            should_handle = !sentry_value_is_null(event);
+        }
 
-        // capture the envelope with the disk transport
-        sentry_transport_t *disk_transport
-            = sentry_new_disk_transport(options->run);
-        sentry__capture_envelope(disk_transport, envelope);
-        sentry__transport_dump_queue(disk_transport, options->run);
-        sentry_transport_free(disk_transport);
+        if (should_handle) {
+            sentry_envelope_t *envelope = sentry__prepare_event(
+                options, event, NULL, !options->on_crash_func);
+            // TODO(tracing): Revisit when investigating transaction flushing
+            // during hard crashes.
+
+            sentry_session_t *session = sentry__end_current_session_with_status(
+                SENTRY_SESSION_STATUS_CRASHED);
+            sentry__envelope_add_session(envelope, session);
+
+            // capture the envelope with the disk transport
+            sentry_transport_t *disk_transport
+                = sentry_new_disk_transport(options->run);
+            sentry__capture_envelope(disk_transport, envelope);
+            sentry__transport_dump_queue(disk_transport, options->run);
+            sentry_transport_free(disk_transport);
+        } else {
+            SENTRY_TRACE("event was discarded by the `on_crash` hook");
+            sentry_value_decref(event);
+        }
 
         // after capturing the crash event, dump all the envelopes to disk
         sentry__transport_dump_queue(options->transport, options->run);

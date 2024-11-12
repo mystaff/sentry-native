@@ -54,15 +54,7 @@ sentry__filelock_try_lock(sentry_filelock_t *lock)
 {
     lock->is_locked = false;
 
-    const int oflags =
-#ifdef SENTRY_PLATFORM_AIX
-        // Under AIX, O_TRUNC can only be set if it can be written to, and
-        // flock (well, fcntl) will return EBADF if the fd is not read-write.
-        O_RDWR | O_CREAT | O_TRUNC;
-#else
-        O_RDONLY | O_CREAT | O_TRUNC;
-#endif
-    int fd = open(lock->path->path, oflags,
+    int fd = open(lock->path->path, O_RDWR | O_CREAT | O_TRUNC,
         S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
     if (fd < 0) {
         return false;
@@ -177,14 +169,20 @@ sentry__path_dir(const sentry_path_t *path)
 }
 
 sentry_path_t *
-sentry__path_from_str(const char *s)
+sentry__path_from_str_n(const char *s, size_t s_len)
 {
-    char *path = sentry__string_clone(s);
+    char *path = sentry__string_clone_n(s, s_len);
     if (!path) {
         return NULL;
     }
     // NOTE: function will free `path` on error
     return sentry__path_from_str_owned(path);
+}
+
+sentry_path_t *
+sentry__path_from_str(const char *s)
+{
+    return s ? sentry__path_from_str_n(s, strlen(s)) : NULL;
 }
 
 sentry_path_t *
@@ -502,4 +500,68 @@ sentry__path_append_buffer(
 {
     return write_buffer_with_flags(
         path, buf, buf_len, O_RDWR | O_CREAT | O_APPEND);
+}
+
+struct sentry_filewriter_s {
+    size_t byte_count;
+    int fd;
+};
+
+MUST_USE sentry_filewriter_t *
+sentry__filewriter_new(const sentry_path_t *path)
+{
+    int fd = open(path->path, O_RDWR | O_CREAT | O_TRUNC,
+        S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH);
+    if (fd < 0) {
+        return NULL;
+    }
+
+    sentry_filewriter_t *result = SENTRY_MAKE(sentry_filewriter_t);
+    if (!result) {
+        close(fd);
+        return NULL;
+    }
+
+    result->fd = fd;
+    result->byte_count = 0;
+    return result;
+}
+
+size_t
+sentry__filewriter_write(
+    sentry_filewriter_t *filewriter, const char *buf, size_t buf_len)
+{
+    if (!filewriter) {
+        return 0;
+    }
+    while (buf_len > 0) {
+        ssize_t n = write(filewriter->fd, buf, buf_len);
+        if (n < 0 && (errno == EAGAIN || errno == EINTR)) {
+            continue;
+        } else if (n <= 0) {
+            break;
+        }
+        filewriter->byte_count += n;
+        buf += n;
+        buf_len -= n;
+    }
+
+    return buf_len;
+}
+
+void
+sentry__filewriter_free(sentry_filewriter_t *filewriter)
+{
+    if (!filewriter) {
+        return;
+    }
+
+    close(filewriter->fd);
+    sentry_free(filewriter);
+}
+
+size_t
+sentry__filewriter_byte_count(sentry_filewriter_t *filewriter)
+{
+    return filewriter->byte_count;
 }
