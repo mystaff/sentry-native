@@ -207,6 +207,7 @@ sentry_options_get_relaunch_argv(const sentry_options_t *opts)
     return opts->relaunch_argv;
 }
 
+void
 sentry_options_set_environment_n(
     sentry_options_t *opts, const char *environment, size_t environment_len)
 {
@@ -587,13 +588,10 @@ sentry_options_set_traces_sample_rate(
         sample_rate = 1.0;
     }
     opts->traces_sample_rate = sample_rate;
-<<<<<<< HEAD
-=======
 
     if (sample_rate > 0 && opts->max_spans == 0) {
         opts->max_spans = SENTRY_SPANS_MAX;
     }
->>>>>>> origin/master
 }
 
 /**
@@ -604,8 +602,6 @@ sentry_options_get_traces_sample_rate(sentry_options_t *opts)
 {
     return opts->traces_sample_rate;
 }
-<<<<<<< HEAD
-=======
 
 void
 sentry_options_set_backend(sentry_options_t *opts, sentry_backend_t *backend)
@@ -613,4 +609,3 @@ sentry_options_set_backend(sentry_options_t *opts, sentry_backend_t *backend)
     sentry__backend_free(opts->backend);
     opts->backend = backend;
 }
->>>>>>> origin/master

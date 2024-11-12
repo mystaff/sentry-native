@@ -435,19 +435,6 @@ main(int argc, char **argv)
         sentry_capture_minidump("minidump.dmp");
     }
 
-    if (has_arg(argc, argv, "capture-transaction")) {
-        sentry_value_t tx_ctx
-            = sentry_value_new_transaction_context("I'm a little teapot",
-                "Short and stout here is my handle and here is my spout");
-
-        if (has_arg(argc, argv, "unsample-tx")) {
-            sentry_transaction_context_set_sampled(tx_ctx, 0);
-        }
-
-        sentry_value_t tx = sentry_transaction_start(tx_ctx);
-        sentry_transaction_finish(tx);
-    }
-
     // make sure everything flushes
     sentry_close();
 
