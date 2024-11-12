@@ -1,59 +1,201 @@
 #include "sentry_os.h"
 #include "sentry_string.h"
+#include "sentry_utils.h"
 
 #ifdef SENTRY_PLATFORM_WINDOWS
 
-#    include <winver.h>
+#    include <windows.h>
+#    define CURRENT_VERSION "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion"
 
-sentry_value_t
-sentry__get_os_context(void)
+void *
+sentry__try_file_version(const LPCWSTR filename)
 {
-    sentry_value_t os = sentry_value_new_object();
-    if (sentry_value_is_null(os)) {
-        return os;
-    }
-
-    sentry_value_set_by_key(os, "name", sentry_value_new_string("Windows"));
-
-    void *ffibuf = NULL;
-
-    DWORD size = GetFileVersionInfoSizeW(L"kernel32.dll", NULL);
+    const DWORD size = GetFileVersionInfoSizeW(filename, NULL);
     if (!size) {
-        goto fail;
+        return NULL;
     }
 
-    ffibuf = sentry_malloc(size);
-    if (!GetFileVersionInfoW(L"kernel32.dll", 0, size, ffibuf)) {
-        goto fail;
+    void *ffibuf = sentry_malloc(size);
+    if (!GetFileVersionInfoW(filename, 0, size, ffibuf)) {
+        sentry_free(ffibuf);
+        return NULL;
+    }
+    return ffibuf;
+}
+
+int
+sentry__get_kernel_version(windows_version_t *win_ver)
+{
+    void *ffibuf = sentry__try_file_version(L"ntoskrnl.exe");
+    if (!ffibuf) {
+        ffibuf = sentry__try_file_version(L"kernel32.dll");
+    }
+    if (!ffibuf) {
+        return 0;
     }
 
     VS_FIXEDFILEINFO *ffi;
     UINT ffi_size;
-    if (!VerQueryValueW(ffibuf, L"\\", &ffi, &ffi_size)) {
-        goto fail;
+    if (!VerQueryValueW(ffibuf, L"\\", (LPVOID *)&ffi, &ffi_size)) {
+        sentry_free(ffibuf);
+        return 0;
     }
     ffi->dwFileFlags &= ffi->dwFileFlagsMask;
 
+    win_ver->major = ffi->dwFileVersionMS >> 16;
+    win_ver->minor = ffi->dwFileVersionMS & 0xffff;
+    win_ver->build = ffi->dwFileVersionLS >> 16;
+    win_ver->ubr = ffi->dwFileVersionLS & 0xffff;
+
+    sentry_free(ffibuf);
+
+    return 1;
+}
+
+int
+sentry__get_windows_version(windows_version_t *win_ver)
+{
+    // The `CurrentMajorVersionNumber`, `CurrentMinorVersionNumber` and `UBR`
+    // are DWORD, while `CurrentBuild` is a SZ (text).
+    uint32_t reg_version = 0;
+    DWORD buf_size = sizeof(uint32_t);
+    if (RegGetValueA(HKEY_LOCAL_MACHINE, CURRENT_VERSION,
+            "CurrentMajorVersionNumber", RRF_RT_REG_DWORD, NULL, &reg_version,
+            &buf_size)
+        != ERROR_SUCCESS) {
+        return 0;
+    }
+    win_ver->major = reg_version;
+
+    buf_size = sizeof(uint32_t);
+    if (RegGetValueA(HKEY_LOCAL_MACHINE, CURRENT_VERSION,
+            "CurrentMinorVersionNumber", RRF_RT_REG_DWORD, NULL, &reg_version,
+            &buf_size)
+        != ERROR_SUCCESS) {
+        return 0;
+    }
+    win_ver->minor = reg_version;
+
     char buf[32];
-    snprintf(buf, sizeof(buf), "%u.%u.%u", ffi->dwFileVersionMS >> 16,
-        ffi->dwFileVersionMS & 0xffff, ffi->dwFileVersionLS >> 16);
+    buf_size = sizeof(buf);
+    if (RegGetValueA(HKEY_LOCAL_MACHINE, CURRENT_VERSION, "CurrentBuild",
+            RRF_RT_REG_SZ, NULL, buf, &buf_size)
+        != ERROR_SUCCESS) {
+        return 0;
+    }
+    win_ver->build = (uint32_t)sentry__strtod_c(buf, NULL);
 
-    sentry_value_set_by_key(os, "version", sentry_value_new_string(buf));
+    buf_size = sizeof(uint32_t);
+    if (RegGetValueA(HKEY_LOCAL_MACHINE, CURRENT_VERSION, "UBR",
+            RRF_RT_REG_DWORD, NULL, &reg_version, &buf_size)
+        != ERROR_SUCCESS) {
+        return 0;
+    }
+    win_ver->ubr = reg_version;
 
-    snprintf(buf, sizeof(buf), "%lu", ffi->dwFileVersionLS & 0xffff);
+    return 1;
+}
 
-    sentry_value_set_by_key(os, "build", sentry_value_new_string(buf));
+sentry_value_t
+sentry__get_os_context(void)
+{
+    const sentry_value_t os = sentry_value_new_object();
+    if (sentry_value_is_null(os)) {
+        return os;
+    }
+    sentry_value_set_by_key(os, "name", sentry_value_new_string("Windows"));
 
-    sentry_free(ffibuf);
+    bool at_least_one_key_successful = false;
+    char buf[32];
+    windows_version_t win_ver;
+    if (sentry__get_kernel_version(&win_ver)) {
+        at_least_one_key_successful = true;
 
-    sentry_value_freeze(os);
-    return os;
+        snprintf(buf, sizeof(buf), "%u.%u.%u.%lu", win_ver.major, win_ver.minor,
+            win_ver.build, win_ver.ubr);
+        sentry_value_set_by_key(
+            os, "kernel_version", sentry_value_new_string(buf));
+    }
 
-fail:
-    sentry_free(ffibuf);
+    if (sentry__get_windows_version(&win_ver)) {
+        at_least_one_key_successful = true;
+
+        snprintf(buf, sizeof(buf), "%u.%u.%u", win_ver.major, win_ver.minor,
+            win_ver.build);
+        sentry_value_set_by_key(os, "version", sentry_value_new_string(buf));
+
+        snprintf(buf, sizeof(buf), "%lu", win_ver.ubr);
+        sentry_value_set_by_key(os, "build", sentry_value_new_string(buf));
+    }
+
+    if (at_least_one_key_successful) {
+        sentry_value_freeze(os);
+        return os;
+    }
 
     sentry_value_decref(os);
     return sentry_value_new_null();
+}
+
+void
+sentry__reserve_thread_stack(void)
+{
+    const unsigned long expected_stack_size = 64 * 1024;
+    unsigned long stack_size = 0;
+    SetThreadStackGuarantee(&stack_size);
+    if (stack_size < expected_stack_size) {
+        stack_size = expected_stack_size;
+        SetThreadStackGuarantee(&stack_size);
+    }
+}
+
+#    if defined(SENTRY_BUILD_SHARED)
+
+BOOL APIENTRY
+DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved)
+{
+    (void)hModule;
+    (void)lpReserved;
+
+    switch (ul_reason_for_call) {
+    case DLL_PROCESS_ATTACH:
+    case DLL_THREAD_ATTACH:
+        sentry__reserve_thread_stack();
+        break;
+    default:
+        return TRUE;
+    }
+    return TRUE;
+}
+
+#    endif // defined(SENTRY_BUILD_SHARED)
+
+static void(WINAPI *g_kernel32_GetSystemTimePreciseAsFileTime)(LPFILETIME)
+    = NULL;
+
+void
+sentry__init_cached_functions(void)
+{
+    // Retrieve GetSystemTimePreciseAsFileTime() for Windows 8+ targets.
+    // Do this at runtime, because this could still be compiled with an SDK
+    // where the function exists, but later runs on a Windows without it.
+    HINSTANCE kernel32 = GetModuleHandleW(L"kernel32.dll");
+    if (!kernel32) {
+        return;
+    }
+    g_kernel32_GetSystemTimePreciseAsFileTime = (void(WINAPI *)(
+        LPFILETIME))GetProcAddress(kernel32, "GetSystemTimePreciseAsFileTime");
+}
+
+void
+sentry__get_system_time(LPFILETIME filetime)
+{
+    if (g_kernel32_GetSystemTimePreciseAsFileTime) {
+        g_kernel32_GetSystemTimePreciseAsFileTime(filetime);
+        return;
+    }
+
+    GetSystemTimeAsFileTime(filetime);
 }
 
 #elif defined(SENTRY_PLATFORM_MACOS)

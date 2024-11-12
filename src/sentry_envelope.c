@@ -201,22 +201,15 @@ sentry_envelope_get_event(const sentry_envelope_t *envelope)
     }
     for (size_t i = 0; i < envelope->contents.items.item_count; i++) {
 
-#ifdef SENTRY_PERFORMANCE_MONITORING
         if (!sentry_value_is_null(envelope->contents.items.items[i].event)
             && !sentry__event_is_transaction(
                 envelope->contents.items.items[i].event)) {
             return envelope->contents.items.items[i].event;
         }
-#else
-        if (!sentry_value_is_null(envelope->contents.items.items[i].event)) {
-            return envelope->contents.items.items[i].event;
-        }
-#endif
     }
     return sentry_value_new_null();
 }
 
-#ifdef SENTRY_PERFORMANCE_MONITORING
 sentry_value_t
 sentry_envelope_get_transaction(const sentry_envelope_t *envelope)
 {
@@ -232,7 +225,6 @@ sentry_envelope_get_transaction(const sentry_envelope_t *envelope)
     }
     return sentry_value_new_null();
 }
-#endif
 
 sentry_envelope_item_t *
 sentry__envelope_add_event(sentry_envelope_t *envelope, sentry_value_t event)
@@ -242,7 +234,7 @@ sentry__envelope_add_event(sentry_envelope_t *envelope, sentry_value_t event)
         return NULL;
     }
 
-    sentry_jsonwriter_t *jw = sentry__jsonwriter_new(NULL);
+    sentry_jsonwriter_t *jw = sentry__jsonwriter_new_sb(NULL);
     if (!jw) {
         return NULL;
     }
@@ -264,7 +256,6 @@ sentry__envelope_add_event(sentry_envelope_t *envelope, sentry_value_t event)
     return item;
 }
 
-#ifdef SENTRY_PERFORMANCE_MONITORING
 sentry_envelope_item_t *
 sentry__envelope_add_transaction(
     sentry_envelope_t *envelope, sentry_value_t transaction)
@@ -274,7 +265,7 @@ sentry__envelope_add_transaction(
         return NULL;
     }
 
-    sentry_jsonwriter_t *jw = sentry__jsonwriter_new(NULL);
+    sentry_jsonwriter_t *jw = sentry__jsonwriter_new_sb(NULL);
     if (!jw) {
         return NULL;
     }
@@ -293,17 +284,46 @@ sentry__envelope_add_transaction(
     sentry_value_incref(event_id);
     sentry__envelope_set_header(envelope, "event_id", event_id);
 
-#    ifdef SENTRY_UNITTEST
+#ifdef SENTRY_UNITTEST
     sentry_value_t now = sentry_value_new_string("2021-12-16T05:53:59.343Z");
-#    else
+#else
     sentry_value_t now = sentry__value_new_string_owned(
-        sentry__msec_time_to_iso8601(sentry__msec_time()));
-#    endif
+        sentry__usec_time_to_iso8601(sentry__usec_time()));
+#endif
     sentry__envelope_set_header(envelope, "sent_at", now);
 
     return item;
 }
-#endif
+
+sentry_envelope_item_t *
+sentry__envelope_add_user_feedback(
+    sentry_envelope_t *envelope, sentry_value_t user_feedback)
+{
+    sentry_envelope_item_t *item = envelope_add_item(envelope);
+    if (!item) {
+        return NULL;
+    }
+
+    sentry_jsonwriter_t *jw = sentry__jsonwriter_new_sb(NULL);
+    if (!jw) {
+        return NULL;
+    }
+
+    sentry_value_t event_id = sentry__ensure_event_id(user_feedback, NULL);
+
+    sentry__jsonwriter_write_value(jw, user_feedback);
+    item->payload = sentry__jsonwriter_into_string(jw, &item->payload_len);
+
+    sentry__envelope_item_set_header(
+        item, "type", sentry_value_new_string("user_report"));
+    sentry_value_t length = sentry_value_new_int32((int32_t)item->payload_len);
+    sentry__envelope_item_set_header(item, "length", length);
+
+    sentry_value_incref(event_id);
+    sentry__envelope_set_header(envelope, "event_id", event_id);
+
+    return item;
+}
 
 sentry_envelope_item_t *
 sentry__envelope_add_session(
@@ -312,7 +332,7 @@ sentry__envelope_add_session(
     if (!envelope || !session) {
         return NULL;
     }
-    sentry_jsonwriter_t *jw = sentry__jsonwriter_new(NULL);
+    sentry_jsonwriter_t *jw = sentry__jsonwriter_new_sb(NULL);
     if (!jw) {
         return NULL;
     }
@@ -332,7 +352,7 @@ sentry__envelope_add_from_buffer(sentry_envelope_t *envelope, const char *buf,
     // NOTE: function will check for the clone of `buf` internally and free it
     // on error
     return envelope_add_from_owned_buffer(
-        envelope, sentry__string_clonen(buf, buf_len), buf_len, type);
+        envelope, sentry__string_clone_n(buf, buf_len), buf_len, type);
 }
 
 sentry_envelope_item_t *
@@ -358,7 +378,7 @@ static void
 sentry__envelope_serialize_headers_into_stringbuilder(
     const sentry_envelope_t *envelope, sentry_stringbuilder_t *sb)
 {
-    sentry_jsonwriter_t *jw = sentry__jsonwriter_new(sb);
+    sentry_jsonwriter_t *jw = sentry__jsonwriter_new_sb(sb);
     if (jw) {
         sentry__jsonwriter_write_value(jw, envelope->contents.items.headers);
         sentry__jsonwriter_free(jw);
@@ -369,7 +389,7 @@ static void
 sentry__envelope_serialize_item_into_stringbuilder(
     const sentry_envelope_item_t *item, sentry_stringbuilder_t *sb)
 {
-    sentry_jsonwriter_t *jw = sentry__jsonwriter_new(sb);
+    sentry_jsonwriter_t *jw = sentry__jsonwriter_new_sb(sb);
     if (!jw) {
         return;
     }
@@ -456,14 +476,56 @@ MUST_USE int
 sentry_envelope_write_to_path(
     const sentry_envelope_t *envelope, const sentry_path_t *path)
 {
-    // TODO: This currently builds the whole buffer in-memory.
-    // It would be nice to actually stream this to a file.
-    size_t buf_len = 0;
-    char *buf = sentry_envelope_serialize(envelope, &buf_len);
+    sentry_filewriter_t *fw = sentry__filewriter_new(path);
+    if (!fw) {
+        return 1;
+    }
 
-    int rv = sentry__path_write_buffer(path, buf, buf_len);
+    if (envelope->is_raw) {
+        return envelope->contents.raw.payload_len
+            != sentry__filewriter_write(fw, envelope->contents.raw.payload,
+                envelope->contents.raw.payload_len);
+    }
 
-    sentry_free(buf);
+    sentry_jsonwriter_t *jw = sentry__jsonwriter_new_fw(fw);
+    if (jw) {
+        sentry__jsonwriter_write_value(jw, envelope->contents.items.headers);
+        sentry__jsonwriter_reset(jw);
+
+        for (size_t i = 0; i < envelope->contents.items.item_count; i++) {
+            const sentry_envelope_item_t *item
+                = &envelope->contents.items.items[i];
+            const char newline = '\n';
+            sentry__filewriter_write(fw, &newline, sizeof(char));
+
+            sentry__jsonwriter_write_value(jw, item->headers);
+            sentry__jsonwriter_reset(jw);
+
+            sentry__filewriter_write(fw, &newline, sizeof(char));
+
+            sentry__filewriter_write(fw, item->payload, item->payload_len);
+        }
+        sentry__jsonwriter_free(jw);
+    }
+
+    size_t rv = sentry__filewriter_byte_count(fw);
+    sentry__filewriter_free(fw);
+
+    return rv == 0;
+}
+
+int
+sentry_envelope_write_to_file_n(
+    const sentry_envelope_t *envelope, const char *path, size_t path_len)
+{
+    if (!envelope || !path) {
+        return 1;
+    }
+    sentry_path_t *path_obj = sentry__path_from_str_n(path, path_len);
+
+    int rv = sentry_envelope_write_to_path(envelope, path_obj);
+
+    sentry__path_free(path_obj);
 
     return rv;
 }
@@ -472,13 +534,11 @@ int
 sentry_envelope_write_to_file(
     const sentry_envelope_t *envelope, const char *path)
 {
-    sentry_path_t *path_obj = sentry__path_from_str(path);
+    if (!envelope || !path) {
+        return 1;
+    }
 
-    int rv = sentry_envelope_write_to_path(envelope, path_obj);
-
-    sentry__path_free(path_obj);
-
-    return rv;
+    return sentry_envelope_write_to_file_n(envelope, path, strlen(path));
 }
 
 #ifdef SENTRY_UNITTEST

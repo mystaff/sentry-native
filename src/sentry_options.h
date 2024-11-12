@@ -38,6 +38,8 @@ typedef struct sentry_options_s {
     char *http_proxy;
     char *ca_certs;
     char *transport_thread_name;
+    char *sdk_name;
+    char *user_agent;
     sentry_path_t *database_path;
     sentry_path_t *handler_path;
     sentry_logger_t logger;
@@ -54,12 +56,12 @@ typedef struct sentry_options_s {
     sentry_transport_t *transport;
     sentry_event_function_t before_send_func;
     void *before_send_data;
+    sentry_crash_function_t on_crash_func;
+    void *on_crash_data;
 
-#ifdef SENTRY_PERFORMANCE_MONITORING
     /* Experimentally exposed */
     double traces_sample_rate;
     size_t max_spans;
-#endif
 
     /* everything from here on down are options which are stored here but
        not exposed through the options API */

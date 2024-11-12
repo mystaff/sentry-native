@@ -7,6 +7,8 @@
 #include "sentry_string.h"
 #include "sentry_symbolizer.h"
 #include "sentry_sync.h"
+#include "sentry_tracing.h"
+#include "sentry_value.h"
 
 #include <stdlib.h>
 
@@ -18,10 +20,6 @@
 #    define SENTRY_BACKEND "inproc"
 #endif
 
-#ifdef SENTRY_PERFORMANCE_MONITORING
-#    include "sentry_tracing.h"
-#endif
-
 static bool g_scope_initialized = false;
 static sentry_scope_t g_scope = { 0 };
 static sentry_mutex_t g_lock = SENTRY__MUTEX_INIT;
@@ -31,8 +29,9 @@ get_client_sdk(void)
 {
     sentry_value_t client_sdk = sentry_value_new_object();
 
-    sentry_value_t name = sentry_value_new_string(SENTRY_SDK_NAME);
-    sentry_value_set_by_key(client_sdk, "name", name);
+    // the SDK is not initialized yet, fallback to build-time value
+    sentry_value_t sdk_name = sentry_value_new_string(SENTRY_SDK_NAME);
+    sentry_value_set_by_key(client_sdk, "name", sdk_name);
 
     sentry_value_t version = sentry_value_new_string(SENTRY_SDK_VERSION);
     sentry_value_set_by_key(client_sdk, "version", version);
@@ -56,7 +55,6 @@ get_client_sdk(void)
     sentry_value_set_by_key(client_sdk, "integrations", integrations);
 #endif
 
-    sentry_value_freeze(client_sdk);
     return client_sdk;
 }
 
@@ -78,10 +76,8 @@ get_scope(void)
     g_scope.breadcrumbs = sentry_value_new_list();
     g_scope.level = SENTRY_LEVEL_ERROR;
     g_scope.client_sdk = get_client_sdk();
-
-#ifdef SENTRY_PERFORMANCE_MONITORING
-    g_scope.span = sentry_value_new_null();
-#endif
+    g_scope.transaction_object = NULL;
+    g_scope.span = NULL;
 
     g_scope_initialized = true;
 
@@ -102,10 +98,8 @@ sentry__scope_cleanup(void)
         sentry_value_decref(g_scope.contexts);
         sentry_value_decref(g_scope.breadcrumbs);
         sentry_value_decref(g_scope.client_sdk);
-
-#ifdef SENTRY_PERFORMANCE_MONITORING
-        sentry_value_decref(g_scope.span);
-#endif
+        sentry__transaction_decref(g_scope.transaction_object);
+        sentry__span_decref(g_scope.span);
     }
     sentry__mutex_unlock(&g_lock);
 }
@@ -124,7 +118,7 @@ sentry__scope_unlock(void)
 }
 
 void
-sentry__scope_flush_unlock()
+sentry__scope_flush_unlock(void)
 {
     sentry__scope_unlock();
     SENTRY_WITH_OPTIONS (options) {
@@ -237,13 +231,26 @@ sentry__symbolize_stacktrace(sentry_value_t stacktrace)
     }
 }
 
-#ifdef SENTRY_PERFORMANCE_MONITORING
-void
-sentry__scope_set_span(sentry_value_t span)
+sentry_value_t
+sentry__get_span_or_transaction(const sentry_scope_t *scope)
 {
-    // TODO: implement this function and get rid of this line.
-    (void)span;
-    return;
+    if (scope->span) {
+        return scope->span->inner;
+    } else if (scope->transaction_object) {
+        return scope->transaction_object->inner;
+    } else {
+        return sentry_value_new_null();
+    }
+}
+
+#ifdef SENTRY_UNITTEST
+sentry_value_t
+sentry__scope_get_span_or_transaction(void)
+{
+    SENTRY_WITH_SCOPE (scope) {
+        return sentry__get_span_or_transaction(scope);
+    }
+    return sentry_value_new_null();
 }
 #endif
 
@@ -290,23 +297,50 @@ sentry__scope_apply_to_event(const sentry_scope_t *scope,
     PLACE_STRING("transaction", scope->transaction);
     PLACE_VALUE("sdk", scope->client_sdk);
 
-    // TODO: these should merge
-    PLACE_CLONED_VALUE("tags", scope->tags);
-    PLACE_CLONED_VALUE("extra", scope->extra);
-
-#ifdef SENTRY_PERFORMANCE_MONITORING
-    // TODO: better, more thorough deep merging
-    sentry_value_t contexts = sentry__value_clone(scope->contexts);
-    sentry_value_t trace = sentry__span_get_trace_context(scope->span);
-    if (!sentry_value_is_null(trace)) {
-        sentry_value_set_by_key(contexts, "trace", trace);
+    sentry_value_t event_tags = sentry_value_get_by_key(event, "tags");
+    if (sentry_value_is_null(event_tags)) {
+        if (!sentry_value_is_null(scope->tags)) {
+            PLACE_CLONED_VALUE("tags", scope->tags);
+        }
+    } else {
+        sentry__value_merge_objects(event_tags, scope->tags);
     }
-    PLACE_VALUE("contexts", contexts);
+    sentry_value_t event_extra = sentry_value_get_by_key(event, "extra");
+    if (sentry_value_is_null(event_extra)) {
+        if (!sentry_value_is_null(scope->extra)) {
+            PLACE_CLONED_VALUE("extra", scope->extra);
+        }
+    } else {
+        sentry__value_merge_objects(event_extra, scope->extra);
+    }
+
+    sentry_value_t contexts = sentry__value_clone(scope->contexts);
+
+    // prep contexts sourced from scope; data about transaction on scope needs
+    // to be extracted and inserted
+    sentry_value_t scope_trace = sentry__value_get_trace_context(
+        sentry__get_span_or_transaction(scope));
+    if (!sentry_value_is_null(scope_trace)) {
+        if (sentry_value_is_null(contexts)) {
+            contexts = sentry_value_new_object();
+        }
+        sentry_value_set_by_key(contexts, "trace", scope_trace);
+    }
+
+    // merge contexts sourced from scope into the event
+    sentry_value_t event_contexts = sentry_value_get_by_key(event, "contexts");
+    if (sentry_value_is_null(event_contexts)) {
+        PLACE_VALUE("contexts", contexts);
+    } else {
+        sentry__value_merge_objects(event_contexts, contexts);
+    }
     sentry_value_decref(contexts);
-#endif
 
     if (mode & SENTRY_SCOPE_BREADCRUMBS) {
-        PLACE_CLONED_VALUE("breadcrumbs", scope->breadcrumbs);
+        sentry_value_t l
+            = sentry__value_ring_buffer_to_list(scope->breadcrumbs);
+        PLACE_VALUE("breadcrumbs", l);
+        sentry_value_decref(l);
     }
 
     if (mode & SENTRY_SCOPE_MODULES) {

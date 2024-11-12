@@ -25,13 +25,13 @@ sentry_uuid_new_v4(void)
 }
 
 sentry_uuid_t
-sentry_uuid_from_string(const char *str)
+sentry_uuid_from_string_n(const char *str, size_t str_len)
 {
     sentry_uuid_t rv;
     memset(&rv, 0, sizeof(rv));
 
     size_t i = 0;
-    size_t len = strlen(str);
+    size_t len = str_len;
     size_t pos = 0;
     bool is_nibble = true;
     char nibble = 0;
@@ -65,6 +65,12 @@ sentry_uuid_from_string(const char *str)
     return rv;
 }
 
+sentry_uuid_t
+sentry_uuid_from_string(const char *str)
+{
+    return str ? sentry_uuid_from_string_n(str, strlen(str))
+               : sentry_uuid_nil();
+}
 sentry_uuid_t
 sentry_uuid_from_bytes(const char bytes[16])
 {
@@ -102,28 +108,26 @@ sentry_uuid_as_string(const sentry_uuid_t *uuid, char str[37])
 #undef B
 }
 
-#ifdef SENTRY_PERFORMANCE_MONITORING
 void
 sentry__internal_uuid_as_string(const sentry_uuid_t *uuid, char str[37])
 {
-#    define B(X) (unsigned char)uuid->bytes[X]
+#define B(X) (unsigned char)uuid->bytes[X]
     snprintf(str, 33,
         "%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx%"
         "02hhx%02hhx%02hhx%02hhx%02hhx%02hhx",
         B(0), B(1), B(2), B(3), B(4), B(5), B(6), B(7), B(8), B(9), B(10),
         B(11), B(12), B(13), B(14), B(15));
-#    undef B
+#undef B
 }
 
 void
 sentry__span_uuid_as_string(const sentry_uuid_t *uuid, char str[17])
 {
-#    define B(X) (unsigned char)uuid->bytes[X]
+#define B(X) (unsigned char)uuid->bytes[X]
     snprintf(str, 17, "%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx", B(0),
         B(1), B(2), B(3), B(4), B(5), B(6), B(7));
-#    undef B
+#undef B
 }
-#endif
 
 #ifdef SENTRY_PLATFORM_WINDOWS
 sentry_uuid_t
