@@ -18,8 +18,8 @@
 static const size_t MAX_READ_TO_BUFFER = 134217728;
 
 #ifndef __MINGW32__
-#    define S_ISREG(m) (((m)&_S_IFMT) == _S_IFREG)
-#    define S_ISDIR(m) (((m)&_S_IFMT) == _S_IFDIR)
+#    define S_ISREG(m) (((m) & _S_IFMT) == _S_IFREG)
+#    define S_ISDIR(m) (((m) & _S_IFMT) == _S_IFDIR)
 #endif
 
 struct sentry_pathiter_s {
@@ -135,14 +135,26 @@ sentry__path_dir(const sentry_path_t *path)
 }
 
 sentry_path_t *
-sentry__path_from_wstr(const wchar_t *s)
+sentry__path_from_wstr_n(const wchar_t *s, size_t s_len)
 {
-    size_t len = wcslen(s) + 1;
-    sentry_path_t *rv = path_with_len(len);
+    if (!s) {
+        return NULL;
+    }
+    sentry_path_t *rv = path_with_len(s_len + 1);
     if (rv) {
-        memcpy(rv->path, s, len * sizeof(wchar_t));
+        memcpy(rv->path, s, s_len * sizeof(wchar_t));
+        rv->path[s_len] = 0;
     }
     return rv;
+}
+
+sentry_path_t *
+sentry__path_from_wstr(const wchar_t *s)
+{
+    if (!s) {
+        return NULL;
+    }
+    return sentry__path_from_wstr_n(s, wcslen(s));
 }
 
 sentry_path_t *
@@ -152,14 +164,15 @@ sentry__path_join_wstr(const sentry_path_t *base, const wchar_t *other)
         return sentry__path_from_wstr(other);
     } else if (other[0] == L'/' || other[0] == L'\\') {
         if (isalpha(base->path[0]) && base->path[1] == L':') {
-            size_t len = wcslen(other) + 3;
-            sentry_path_t *rv = path_with_len(len);
+            size_t other_len = wcslen(other);
+            sentry_path_t *rv = path_with_len(other_len + 3);
             if (!rv) {
                 return NULL;
             }
             rv->path[0] = base->path[0];
             rv->path[1] = L':';
-            memcpy(rv->path + 2, other, sizeof(wchar_t) * len);
+            memcpy(rv->path + 2, other, sizeof(wchar_t) * other_len);
+            rv->path[other_len + 2] = L'\0';
             return rv;
         } else {
             return sentry__path_from_wstr(other);
@@ -189,20 +202,42 @@ sentry__path_join_wstr(const sentry_path_t *base, const wchar_t *other)
 }
 
 sentry_path_t *
-sentry__path_from_str(const char *s)
+sentry__path_from_str_n(const char *s, size_t s_len)
 {
-    size_t len = MultiByteToWideChar(CP_ACP, 0, s, -1, NULL, 0);
+    if (!s) {
+        return NULL;
+    }
     sentry_path_t *rv = SENTRY_MAKE(sentry_path_t);
     if (!rv) {
         return NULL;
     }
-    rv->path = sentry_malloc(sizeof(wchar_t) * len);
+    size_t src_size = sizeof(char) * s_len;
+    size_t dst_size = sizeof(wchar_t) * (s_len + 1);
+    rv->path = sentry_malloc(dst_size);
     if (!rv->path) {
-        sentry_free(rv);
+        goto error;
+    }
+    int conv_len = MultiByteToWideChar(
+        CP_ACP, 0, s, (int)src_size, rv->path, (int)s_len);
+    if (conv_len == 0) {
+        goto error;
+    }
+    rv->path[conv_len] = 0;
+    return rv;
+
+error:
+    sentry_free(rv);
+    return NULL;
+}
+
+sentry_path_t *
+sentry__path_from_str(const char *s)
+{
+    if (!s) {
         return NULL;
     }
-    MultiByteToWideChar(CP_ACP, 0, s, -1, rv->path, (int)len);
-    return rv;
+
+    return sentry__path_from_str_n(s, strlen(s));
 }
 
 sentry_path_t *
@@ -239,6 +274,9 @@ bool
 sentry__path_filename_matches(const sentry_path_t *path, const char *filename)
 {
     sentry_path_t *fn = sentry__path_from_str(filename);
+    if (!fn) {
+        return false;
+    }
     bool matches = _wcsicmp(sentry__path_filename(path), fn->path) == 0;
     sentry__path_free(fn);
     return matches;
@@ -248,6 +286,9 @@ bool
 sentry__path_ends_with(const sentry_path_t *path, const char *suffix)
 {
     sentry_path_t *s = sentry__path_from_str(suffix);
+    if (!s) {
+        return false;
+    }
     size_t pathlen = wcslen(path->path);
     size_t suffixlen = wcslen(s->path);
     if (suffixlen > pathlen) {
@@ -535,4 +576,67 @@ sentry__path_append_buffer(
     const sentry_path_t *path, const char *buf, size_t buf_len)
 {
     return write_buffer_with_mode(path, buf, buf_len, L"ab");
+}
+
+struct sentry_filewriter_s {
+    size_t byte_count;
+    FILE *f;
+};
+
+MUST_USE sentry_filewriter_t *
+sentry__filewriter_new(const sentry_path_t *path)
+{
+    FILE *f = _wfopen(path->path, L"wb");
+    if (!f) {
+        return NULL;
+    }
+
+    sentry_filewriter_t *result = SENTRY_MAKE(sentry_filewriter_t);
+    if (!result) {
+        fclose(f);
+        return NULL;
+    }
+
+    result->f = f;
+    result->byte_count = 0;
+    return result;
+}
+
+size_t
+sentry__filewriter_write(
+    sentry_filewriter_t *filewriter, const char *buf, size_t buf_len)
+{
+    if (!filewriter) {
+        return 0;
+    }
+    while (buf_len > 0) {
+        size_t n = fwrite(buf, 1, buf_len, filewriter->f);
+        if (n == 0 && errno == EINVAL) {
+            continue;
+        } else if (n < buf_len) {
+            break;
+        }
+        filewriter->byte_count += n;
+        buf += n;
+        buf_len -= n;
+    }
+
+    return buf_len;
+}
+
+void
+sentry__filewriter_free(sentry_filewriter_t *filewriter)
+{
+    if (!filewriter) {
+        return;
+    }
+    fflush(filewriter->f);
+    fclose(filewriter->f);
+    sentry_free(filewriter);
+}
+
+size_t
+sentry__filewriter_byte_count(sentry_filewriter_t *filewriter)
+{
+    return filewriter->byte_count;
 }

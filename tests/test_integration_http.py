@@ -1,12 +1,13 @@
-import pytest
-import subprocess
-import sys
-import os
-import time
 import itertools
 import json
-from . import make_dsn, check_output, run, Envelope
-from .conditions import has_http, has_breakpad, has_files
+import os
+import shutil
+import time
+import uuid
+
+import pytest
+
+from . import make_dsn, run, Envelope
 from .assertions import (
     assert_attachment,
     assert_meta,
@@ -14,18 +15,35 @@ from .assertions import (
     assert_stacktrace,
     assert_event,
     assert_exception,
-    assert_crash,
+    assert_inproc_crash,
     assert_session,
+    assert_user_feedback,
     assert_minidump,
+    assert_breakpad_crash,
+    assert_gzip_content_encoding,
+    assert_gzip_file_header,
 )
+from .conditions import has_http, has_breakpad, has_files
 
 pytestmark = pytest.mark.skipif(not has_http, reason="tests need http")
 
-auth_header = "Sentry sentry_key=uiaeosnrtdy, sentry_version=7, sentry_client=sentry.native/0.4.13"
+# fmt: off
+auth_header = (
+    "Sentry sentry_key=uiaeosnrtdy, sentry_version=7, sentry_client=sentry.native/0.7.12"
+)
+# fmt: on
 
 
-def test_capture_http(cmake, httpserver):
-    tmp_path = cmake(["sentry_example"], {"SENTRY_BACKEND": "none"})
+@pytest.mark.parametrize(
+    "build_args",
+    [
+        ({"SENTRY_TRANSPORT_COMPRESSION": "Off"}),
+        ({"SENTRY_TRANSPORT_COMPRESSION": "On"}),
+    ],
+)
+def test_capture_http(cmake, httpserver, build_args):
+    build_args.update({"SENTRY_BACKEND": "none"})
+    tmp_path = cmake(["sentry_example"], build_args)
 
     httpserver.expect_oneshot_request(
         "/api/123456/envelope/",
@@ -42,8 +60,14 @@ def test_capture_http(cmake, httpserver):
     )
 
     assert len(httpserver.log) == 1
-    output = httpserver.log[0][0].get_data()
-    envelope = Envelope.deserialize(output)
+    req = httpserver.log[0][0]
+    body = req.get_data()
+
+    if build_args.get("SENTRY_TRANSPORT_COMPRESSION") == "On":
+        assert_gzip_content_encoding(req)
+        assert_gzip_file_header(body)
+
+    envelope = Envelope.deserialize(body)
 
     assert_meta(envelope, "🤮🚀")
     assert_breadcrumb(envelope)
@@ -111,6 +135,35 @@ def test_capture_and_session_http(cmake, httpserver):
     output = httpserver.log[1][0].get_data()
     envelope = Envelope.deserialize(output)
     assert_session(envelope, {"status": "exited", "errors": 0})
+
+
+def test_user_feedback_http(cmake, httpserver):
+    tmp_path = cmake(["sentry_example"], {"SENTRY_BACKEND": "none"})
+
+    httpserver.expect_request(
+        "/api/123456/envelope/",
+        headers={"x-sentry-auth": auth_header},
+    ).respond_with_data("OK")
+    env = dict(os.environ, SENTRY_DSN=make_dsn(httpserver))
+
+    run(
+        tmp_path,
+        "sentry_example",
+        ["log", "capture-user-feedback"],
+        check=True,
+        env=env,
+    )
+
+    assert len(httpserver.log) == 2
+    output = httpserver.log[0][0].get_data()
+    envelope = Envelope.deserialize(output)
+
+    assert_event(envelope, "Hello user feedback!")
+
+    output = httpserver.log[1][0].get_data()
+    envelope = Envelope.deserialize(output)
+
+    assert_user_feedback(envelope)
 
 
 def test_exception_and_session_http(cmake, httpserver):
@@ -198,8 +251,16 @@ def test_abnormal_session(cmake, httpserver):
     assert_session(envelope1, {"status": "abnormal", "errors": 0, "duration": 10})
 
 
-def test_inproc_crash_http(cmake, httpserver):
-    tmp_path = cmake(["sentry_example"], {"SENTRY_BACKEND": "inproc"})
+@pytest.mark.parametrize(
+    "build_args",
+    [
+        ({"SENTRY_TRANSPORT_COMPRESSION": "Off"}),
+        ({"SENTRY_TRANSPORT_COMPRESSION": "On"}),
+    ],
+)
+def test_inproc_crash_http(cmake, httpserver, build_args):
+    build_args.update({"SENTRY_BACKEND": "inproc"})
+    tmp_path = cmake(["sentry_example"], build_args)
 
     httpserver.expect_request(
         "/api/123456/envelope/",
@@ -213,7 +274,7 @@ def test_inproc_crash_http(cmake, httpserver):
         ["log", "start-session", "attachment", "crash"],
         env=env,
     )
-    assert child.returncode  # well, its a crash after all
+    assert child.returncode  # well, it's a crash after all
 
     run(
         tmp_path,
@@ -224,7 +285,14 @@ def test_inproc_crash_http(cmake, httpserver):
     )
 
     assert len(httpserver.log) == 1
-    envelope = Envelope.deserialize(httpserver.log[0][0].get_data())
+    req = httpserver.log[0][0]
+    body = req.get_data()
+
+    if build_args.get("SENTRY_TRANSPORT_COMPRESSION") == "On":
+        assert_gzip_content_encoding(req)
+        assert_gzip_file_header(body)
+
+    envelope = Envelope.deserialize(body)
 
     assert_session(envelope, {"init": True, "status": "crashed", "errors": 1})
 
@@ -232,7 +300,35 @@ def test_inproc_crash_http(cmake, httpserver):
     assert_breadcrumb(envelope)
     assert_attachment(envelope)
 
-    assert_crash(envelope)
+    assert_inproc_crash(envelope)
+
+
+def test_inproc_reinstall(cmake, httpserver):
+    tmp_path = cmake(["sentry_example"], {"SENTRY_BACKEND": "inproc"})
+
+    env = dict(os.environ, SENTRY_DSN=make_dsn(httpserver))
+    httpserver.expect_request(
+        "/api/123456/envelope/",
+        headers={"x-sentry-auth": auth_header},
+    ).respond_with_data("OK")
+
+    child = run(
+        tmp_path,
+        "sentry_example",
+        ["log", "reinstall", "crash"],
+        env=env,
+    )
+    assert child.returncode  # well, it's a crash after all
+
+    run(
+        tmp_path,
+        "sentry_example",
+        ["log", "no-setup"],
+        check=True,
+        env=env,
+    )
+
+    assert len(httpserver.log) == 1
 
 
 def test_inproc_reinstall(cmake, httpserver):
@@ -275,8 +371,7 @@ def test_inproc_dump_inflight(cmake, httpserver):
     child = run(
         tmp_path, "sentry_example", ["log", "capture-multiple", "crash"], env=env
     )
-    assert child.returncode  # well, its a crash after all
-
+    assert child.returncode  # well, it's a crash after all
     run(tmp_path, "sentry_example", ["log", "no-setup"], check=True, env=env)
 
     # we trigger 10 normal events, and 1 crash
@@ -284,8 +379,16 @@ def test_inproc_dump_inflight(cmake, httpserver):
 
 
 @pytest.mark.skipif(not has_breakpad, reason="test needs breakpad backend")
-def test_breakpad_crash_http(cmake, httpserver):
-    tmp_path = cmake(["sentry_example"], {"SENTRY_BACKEND": "breakpad"})
+@pytest.mark.parametrize(
+    "build_args",
+    [
+        ({"SENTRY_TRANSPORT_COMPRESSION": "Off"}),
+        ({"SENTRY_TRANSPORT_COMPRESSION": "On"}),
+    ],
+)
+def test_breakpad_crash_http(cmake, httpserver, build_args):
+    build_args.update({"SENTRY_BACKEND": "breakpad"})
+    tmp_path = cmake(["sentry_example"], build_args)
 
     httpserver.expect_request(
         "/api/123456/envelope/",
@@ -299,7 +402,7 @@ def test_breakpad_crash_http(cmake, httpserver):
         ["log", "start-session", "attachment", "crash"],
         env=env,
     )
-    assert child.returncode  # well, its a crash after all
+    assert child.returncode  # well, it's a crash after all
 
     run(
         tmp_path,
@@ -310,7 +413,14 @@ def test_breakpad_crash_http(cmake, httpserver):
     )
 
     assert len(httpserver.log) == 1
-    envelope = Envelope.deserialize(httpserver.log[0][0].get_data())
+    req = httpserver.log[0][0]
+    body = req.get_data()
+
+    if build_args.get("SENTRY_TRANSPORT_COMPRESSION") == "On":
+        assert_gzip_content_encoding(req)
+        assert_gzip_file_header(body)
+
+    envelope = Envelope.deserialize(body)
 
     assert_session(envelope, {"init": True, "status": "crashed", "errors": 1})
 
@@ -318,6 +428,7 @@ def test_breakpad_crash_http(cmake, httpserver):
     assert_breadcrumb(envelope)
     assert_attachment(envelope)
 
+    assert_breakpad_crash(envelope)
     assert_minidump(envelope)
 
 
@@ -337,7 +448,7 @@ def test_breakpad_reinstall(cmake, httpserver):
         ["log", "reinstall", "crash"],
         env=env,
     )
-    assert child.returncode  # well, its a crash after all
+    assert child.returncode  # well, it's a crash after all
 
     run(
         tmp_path,
@@ -363,7 +474,7 @@ def test_breakpad_dump_inflight(cmake, httpserver):
     child = run(
         tmp_path, "sentry_example", ["log", "capture-multiple", "crash"], env=env
     )
-    assert child.returncode  # well, its a crash after all
+    assert child.returncode  # well, it's a crash after all
 
     run(tmp_path, "sentry_example", ["log", "no-setup"], check=True, env=env)
 
@@ -401,6 +512,7 @@ def test_shutdown_timeout(cmake, httpserver):
         env=env,
         check=True,
     )
+    assert child.returncode == 0
 
     httpserver.clear_all_handlers()
     httpserver.clear_log()
@@ -413,3 +525,112 @@ def test_shutdown_timeout(cmake, httpserver):
     run(tmp_path, "sentry_example", ["log", "no-setup"], check=True, env=env)
 
     assert len(httpserver.log) == 10
+
+
+RFC3339_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
+
+
+@pytest.mark.parametrize(
+    "build_args",
+    [
+        ({"SENTRY_TRANSPORT_COMPRESSION": "Off"}),
+        ({"SENTRY_TRANSPORT_COMPRESSION": "On"}),
+    ],
+)
+def test_transaction_only(cmake, httpserver, build_args):
+    build_args.update({"SENTRY_BACKEND": "none"})
+    tmp_path = cmake(["sentry_example"], build_args)
+
+    httpserver.expect_oneshot_request(
+        "/api/123456/envelope/",
+        headers={"x-sentry-auth": auth_header},
+    ).respond_with_data("OK")
+    env = dict(os.environ, SENTRY_DSN=make_dsn(httpserver), SENTRY_RELEASE="🤮🚀")
+
+    run(
+        tmp_path,
+        "sentry_example",
+        ["log", "capture-transaction"],
+        check=True,
+        env=env,
+    )
+
+    assert len(httpserver.log) == 1
+    req = httpserver.log[0][0]
+    body = req.get_data()
+
+    if build_args.get("SENTRY_TRANSPORT_COMPRESSION") == "On":
+        assert_gzip_content_encoding(req)
+        assert_gzip_file_header(body)
+
+    envelope = Envelope.deserialize(body)
+
+    # Show what the envelope looks like if the test fails.
+    envelope.print_verbose()
+
+    # The transaction is overwritten.
+    assert_meta(
+        envelope,
+        transaction="little.teapot",
+        transaction_data={"url": "https://example.com"},
+    )
+
+    # Extract the one-and-only-item
+    (event,) = envelope.items
+
+    assert event.headers["type"] == "transaction"
+    payload = event.payload.json
+
+    # See https://develop.sentry.dev/sdk/performance/trace-context/#trace-context
+    trace_context = payload["contexts"]["trace"]
+
+    assert (
+        trace_context["op"] == "Short and stout here is my handle and here is my spout"
+    )
+
+    assert trace_context["trace_id"]
+    trace_id = uuid.UUID(hex=trace_context["trace_id"])
+    assert trace_id
+
+    # TODO: currently missing
+    # assert trace_context['public_key']
+
+    assert trace_context["span_id"]
+    assert trace_context["status"] == "ok"
+
+    start_timestamp = time.strptime(payload["start_timestamp"], RFC3339_FORMAT)
+    assert start_timestamp
+    timestamp = time.strptime(payload["timestamp"], RFC3339_FORMAT)
+    assert timestamp >= start_timestamp
+
+
+def test_capture_minidump(cmake, httpserver):
+    tmp_path = cmake(["sentry_example"], {"SENTRY_BACKEND": "none"})
+
+    # make sure we are isolated from previous runs
+    shutil.rmtree(tmp_path / ".sentry-native", ignore_errors=True)
+
+    httpserver.expect_oneshot_request(
+        "/api/123456/envelope/",
+        headers={"x-sentry-auth": auth_header},
+    ).respond_with_data("OK")
+
+    run(
+        tmp_path,
+        "sentry_example",
+        ["log", "attachment", "capture-minidump"],
+        check=True,
+        env=dict(os.environ, SENTRY_DSN=make_dsn(httpserver)),
+    )
+
+    assert len(httpserver.log) == 1
+
+    req = httpserver.log[0][0]
+    body = req.get_data()
+
+    envelope = Envelope.deserialize(body)
+
+    assert_breadcrumb(envelope)
+    assert_attachment(envelope)
+
+    assert_minidump(envelope)

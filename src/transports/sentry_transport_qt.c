@@ -14,6 +14,7 @@
 
 typedef struct qt_transport_state_s {
     sentry_dsn_t *dsn;
+    char *user_agent;
     sentry_rate_limiter_t *ratelimiter;
     void (*func)(const char *url, const char *body, const long bodyLen,
         const char *headers, void *data, void *state);
@@ -69,7 +70,7 @@ sentry__qt_transport_send_envelope(sentry_envelope_t *envelope, void *_state)
     qt_transport_state_t *state = (qt_transport_state_t *)_state;
 
     sentry_prepared_http_request_t *req = sentry__prepare_http_request(
-        envelope, state->dsn, state->ratelimiter);
+        envelope, state->dsn, state->ratelimiter, state->user_agent);
     if (!req) {
         sentry_envelope_free(envelope);
         return;

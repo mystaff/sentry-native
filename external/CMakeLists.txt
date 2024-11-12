@@ -20,6 +20,10 @@ set(BREAKPAD_SOURCES_COMMON_LINUX
     breakpad/src/common/linux/linux_libc_support.cc
     breakpad/src/common/linux/memory_mapped_file.cc
     breakpad/src/common/linux/safe_readlink.cc
+    breakpad/src/common/linux/scoped_pipe.cc
+    breakpad/src/common/linux/scoped_pipe.h
+    breakpad/src/common/linux/scoped_tmpfile.cc
+    breakpad/src/common/linux/scoped_tmpfile.h
 )
 
 set(BREAKPAD_SOURCES_COMMON_LINUX_GETCONTEXT
@@ -36,6 +40,8 @@ set(BREAKPAD_SOURCES_COMMON_WINDOWS
 )
 
 set(BREAKPAD_SOURCES_COMMON_APPLE
+    breakpad/src/common/mac/arch_utilities.cc
+    breakpad/src/common/mac/arch_utilities.h
     breakpad/src/common/mac/file_id.cc
     breakpad/src/common/mac/file_id.h
     breakpad/src/common/mac/macho_id.cc
@@ -74,6 +80,9 @@ set(BREAKPAD_SOURCES_CLIENT_LINUX
     breakpad/src/client/linux/minidump_writer/linux_dumper.cc
     breakpad/src/client/linux/minidump_writer/linux_ptrace_dumper.cc
     breakpad/src/client/linux/minidump_writer/minidump_writer.cc
+    breakpad/src/client/linux/minidump_writer/pe_file.cc
+    breakpad/src/client/linux/minidump_writer/pe_file.h
+    breakpad/src/client/linux/minidump_writer/pe_structs.h
 )
 
 set(BREAKPAD_SOURCES_CLIENT_WINDOWS
@@ -91,13 +100,13 @@ set(BREAKPAD_SOURCES_CLIENT_APPLE
     breakpad/src/client/mac/handler/breakpad_nlist_64.h
     breakpad/src/client/mac/handler/dynamic_images.cc
     breakpad/src/client/mac/handler/dynamic_images.h
-    breakpad/src/client/mac/handler/exception_handler.cc
-    breakpad/src/client/mac/handler/exception_handler.h
     breakpad/src/client/mac/handler/minidump_generator.cc
     breakpad/src/client/mac/handler/minidump_generator.h
 )
 
 set(BREAKPAD_SOURCES_CLIENT_MAC
+    breakpad/src/client/mac/handler/exception_handler.cc
+    breakpad/src/client/mac/handler/exception_handler.h
     breakpad/src/client/mac/crash_generation/crash_generation_client.cc
     breakpad/src/client/mac/crash_generation/crash_generation_client.h
 )
@@ -115,12 +124,14 @@ set(BREAKPAD_SOURCES_CLIENT_IOS
     breakpad/src/client/mac/handler/ucontext_compat.h
 )
 
-
 add_library(breakpad_client STATIC)
+set_property(TARGET breakpad_client PROPERTY CXX_STANDARD 17)
+set_property(TARGET breakpad_client PROPERTY CXX_STANDARD_REQUIRED On)
 target_sources(breakpad_client PRIVATE ${BREAKPAD_SOURCES_COMMON})
 
 if(LINUX OR ANDROID)
     target_sources(breakpad_client PRIVATE ${BREAKPAD_SOURCES_COMMON_LINUX} ${BREAKPAD_SOURCES_CLIENT_LINUX})
+
     if(ANDROID)
         target_sources(breakpad_client PRIVATE ${BREAKPAD_SOURCES_COMMON_ANDROID})
         target_include_directories(breakpad_client PRIVATE breakpad/src/common/android/include)
@@ -128,6 +139,7 @@ if(LINUX OR ANDROID)
 
     include(CheckFunctionExists)
     check_function_exists(getcontext HAVE_GETCONTEXT)
+
     if(HAVE_GETCONTEXT)
         target_compile_definitions(breakpad_client PRIVATE HAVE_GETCONTEXT)
     else()
@@ -141,6 +153,7 @@ if(APPLE)
     target_sources(breakpad_client PRIVATE
         ${BREAKPAD_SOURCES_COMMON_APPLE}
         ${BREAKPAD_SOURCES_CLIENT_APPLE})
+
     if(NOT IOS)
         target_sources(breakpad_client PRIVATE
             ${BREAKPAD_SOURCES_COMMON_MAC}
@@ -167,8 +180,8 @@ endif()
 # which are being resolved correctly when we add the current directory to
 # the include directories. A giant hack, yes, but it works
 target_include_directories(breakpad_client
-	PRIVATE
-		"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/breakpad/src/>"
-	PUBLIC
-		"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>"
+    PRIVATE
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/breakpad/src/>"
+    PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>"
 )
