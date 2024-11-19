@@ -2,11 +2,11 @@
 .DS_Store
 .vs
 CMakeSettings.json
+.idea
 
-# CMake builds
-/build
-/build*
-leak-build
+# CMake builds & install
+/*build*
+/*install*
 
 # Run files
 .sentry-native
@@ -17,6 +17,14 @@ __pycache__
 
 # Devtools
 CodeChecker
+.ccls-cache
 
 # Coverage
 coverage
+
+# Gradle / Java
+local.properties
+.gradle
+.cxx
+build
+

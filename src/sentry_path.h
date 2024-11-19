@@ -23,9 +23,12 @@ struct sentry_filelock_s {
     bool is_locked;
 };
 
+struct sentry_filewriter_s;
+
 typedef struct sentry_path_s sentry_path_t;
 typedef struct sentry_pathiter_s sentry_pathiter_t;
 typedef struct sentry_filelock_s sentry_filelock_t;
+typedef struct sentry_filewriter_s sentry_filewriter_t;
 
 /**
  * NOTE on encodings:
@@ -53,6 +56,7 @@ sentry_path_t *sentry__path_dir(const sentry_path_t *path);
  * Create a new path from the given string.
  */
 sentry_path_t *sentry__path_from_str(const char *s);
+sentry_path_t *sentry__path_from_str_n(const char *s, size_t s_len);
 
 /**
  * Create a new path from the given string.
@@ -199,12 +203,35 @@ void sentry__filelock_unlock(sentry_filelock_t *lock);
  */
 void sentry__filelock_free(sentry_filelock_t *lock);
 
+/**
+ * Create a new file-writer, which is a stateful abstraction over the
+ * OS-specific file-handle and a byte counter.
+ */
+sentry_filewriter_t *sentry__filewriter_new(const sentry_path_t *path);
+
+/**
+ * Writes a buffer to the file behind the handle stored in the filewriter.
+ */
+size_t sentry__filewriter_write(
+    sentry_filewriter_t *filewriter, const char *buf, size_t buf_len);
+
+/**
+ * Retrieves the count of written bytes.
+ */
+size_t sentry__filewriter_byte_count(sentry_filewriter_t *filewriter);
+
+/**
+ * Frees the filewriter and closes the handle.
+ */
+void sentry__filewriter_free(sentry_filewriter_t *filewriter);
+
 /* windows specific API additions */
 #ifdef SENTRY_PLATFORM_WINDOWS
 /**
  * Create a new path from a Wide String.
  */
 sentry_path_t *sentry__path_from_wstr(const wchar_t *s);
+sentry_path_t *sentry__path_from_wstr_n(const wchar_t *s, size_t s_len);
 
 /**
  * Create another path by appending a new path segment.

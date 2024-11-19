@@ -12,14 +12,17 @@ build: build/Makefile
 	@cmake --build build --parallel
 .PHONY: build
 
-build/sentry_test_unit: build
-	@cmake --build build --target sentry_test_unit --parallel
-
 test: update-test-discovery test-integration
 .PHONY: test
 
-test-unit: update-test-discovery build/sentry_test_unit
-	./build/sentry_test_unit
+test-unit: update-test-discovery CMakeLists.txt
+	@mkdir -p unit-build
+	@cd unit-build; cmake \
+		-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$(PWD)/unit-build \
+		-DSENTRY_BACKEND=none \
+		..
+	@cmake --build unit-build --target sentry_test_unit --parallel
+	./unit-build/sentry_test_unit
 .PHONY: test-unit
 
 test-integration: setup-venv
@@ -63,7 +66,7 @@ setup-venv: .venv/bin/python
 	.venv/bin/pip install --upgrade --requirement tests/requirements.txt
 
 format: setup-venv
-	@clang-format -i \
+	@.venv/bin/clang-format -i \
 		examples/*.c \
 		include/*.h \
 		src/*.c \
@@ -77,6 +80,8 @@ format: setup-venv
 .PHONY: format
 
 style: setup-venv
-	@.venv/bin/python ./scripts/check-clang-format.py -r examples include src tests/unit
+	@.venv/bin/python ./scripts/check-clang-format.py \
+		--clang-format-executable .venv/bin/clang-format \
+		-r examples include src tests/unit
 	@.venv/bin/black --diff --check tests
 .PHONY: style

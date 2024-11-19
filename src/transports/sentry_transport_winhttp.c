@@ -63,7 +63,7 @@ sentry__winhttp_transport_start(
     winhttp_bgworker_state_t *state = sentry__bgworker_get_state(bgworker);
 
     state->dsn = sentry__dsn_incref(opts->dsn);
-    state->user_agent = sentry__string_to_wstr(SENTRY_SDK_USER_AGENT);
+    state->user_agent = sentry__string_to_wstr(opts->user_agent);
     state->debug = opts->debug;
 
     sentry__bgworker_setname(bgworker, opts->transport_thread_name);
@@ -74,7 +74,7 @@ sentry__winhttp_transport_start(
         const char *ptr = opts->http_proxy + 7;
         const char *slash = strchr(ptr, '/');
         if (slash) {
-            char *copy = sentry__string_clonen(ptr, slash - ptr);
+            char *copy = sentry__string_clone_n(ptr, slash - ptr);
             state->proxy = sentry__string_to_wstr(copy);
             sentry_free(copy);
         } else {
@@ -105,6 +105,13 @@ sentry__winhttp_transport_start(
         return 1;
     }
     return sentry__bgworker_start(bgworker);
+}
+
+static int
+sentry__winhttp_transport_flush(uint64_t timeout, void *transport_state)
+{
+    sentry_bgworker_t *bgworker = (sentry_bgworker_t *)transport_state;
+    return sentry__bgworker_flush(bgworker, timeout);
 }
 
 static int
@@ -145,9 +152,11 @@ sentry__winhttp_send_task(void *_envelope, void *_state)
 
     uint64_t started = sentry__monotonic_time();
 
+    char *user_agent = sentry__string_from_wstr(state->user_agent);
     sentry_prepared_http_request_t *req = sentry__prepare_http_request(
-        envelope, state->dsn, state->ratelimiter);
+        envelope, state->dsn, state->ratelimiter, user_agent);
     if (!req) {
+        sentry_free(user_agent);
         return;
     }
 
@@ -234,6 +243,10 @@ sentry__winhttp_send_task(void *_envelope, void *_state)
         // lets just assume we won’t have headers > 2k
         wchar_t buf[2048];
         DWORD buf_size = sizeof(buf);
+
+        DWORD status_code = 0;
+        DWORD status_code_size = sizeof(status_code);
+
         if (WinHttpQueryHeaders(state->request, WINHTTP_QUERY_CUSTOM,
                 L"x-sentry-rate-limits", buf, &buf_size,
                 WINHTTP_NO_HEADER_INDEX)) {
@@ -251,6 +264,12 @@ sentry__winhttp_send_task(void *_envelope, void *_state)
                     state->ratelimiter, h);
                 sentry_free(h);
             }
+        } else if (WinHttpQueryHeaders(state->request,
+                       WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                       WINHTTP_HEADER_NAME_BY_INDEX, &status_code,
+                       &status_code_size, WINHTTP_NO_HEADER_INDEX)
+            && status_code == 429) {
+            sentry__rate_limiter_update_from_429(state->ratelimiter);
         }
     } else {
         SENTRY_DEBUGF(
@@ -266,6 +285,7 @@ exit:
         state->request = NULL;
         WinHttpCloseHandle(request);
     }
+    sentry_free(user_agent);
     sentry_free(url);
     sentry_free(headers);
     sentry__prepared_http_request_free(req);
@@ -322,6 +342,7 @@ sentry__transport_new_default(void)
         transport, (void (*)(void *))sentry__bgworker_decref);
     sentry_transport_set_startup_func(
         transport, sentry__winhttp_transport_start);
+    sentry_transport_set_flush_func(transport, sentry__winhttp_transport_flush);
     sentry_transport_set_shutdown_func(
         transport, sentry__winhttp_transport_shutdown);
     sentry__transport_set_dump_func(transport, sentry__winhttp_dump_queue);

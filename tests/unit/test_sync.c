@@ -4,7 +4,7 @@
 
 #ifdef SENTRY_PLATFORM_WINDOWS
 #    include <windows.h>
-#    define sleep_s(SECONDS) Sleep((SECONDS)*1000)
+#    define sleep_s(SECONDS) Sleep((SECONDS) * 1000)
 #else
 #    include <unistd.h>
 #    define sleep_s(SECONDS) sleep(SECONDS)
@@ -130,4 +130,24 @@ SENTRY_TEST(task_queue)
     // the worker will still execute tasks as long as there are some, even if it
     // was instructed to shut down
     TEST_CHECK(executed_after_shutdown);
+}
+
+SENTRY_TEST(bgworker_flush)
+{
+    sentry_bgworker_t *bgw = sentry__bgworker_new(NULL, NULL);
+    sentry__bgworker_submit(bgw, sleep_task, NULL, NULL);
+
+    sentry__bgworker_start(bgw);
+
+    // first flush times out
+    int flush = sentry__bgworker_flush(bgw, 500);
+    TEST_CHECK_INT_EQUAL(flush, 1);
+
+    // second flush succeeds
+    flush = sentry__bgworker_flush(bgw, 1000);
+    TEST_CHECK_INT_EQUAL(flush, 0);
+
+    int shutdown = sentry__bgworker_shutdown(bgw, 500);
+    TEST_CHECK_INT_EQUAL(shutdown, 0);
+    sentry__bgworker_decref(bgw);
 }

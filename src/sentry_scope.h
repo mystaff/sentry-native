@@ -19,12 +19,17 @@ typedef struct sentry_scope_s {
     sentry_value_t breadcrumbs;
     sentry_level_t level;
     sentry_value_t client_sdk;
-    // Not to be confused with transaction, which is a legacy value. This is
-    // also known as a transaction, but to maintain consistency with other SDKs
-    // and to avoid a conflict with the existing transaction field this is named
-    // span. Whenever possible, `transaction` should pull its value from the
-    // `name` property nested in this field.
-    sentry_value_t span;
+
+    // The span attached to this scope, if any.
+    //
+    // Conceptually, every transaction is a span, so it should be possible to
+    // attach spans or transactions to a scope. But sentry_span_t and
+    // sentry_transaction_t are unrelated types in the native SDK, so we need
+    // two distinct pointers. At most one of them should ever be non-null.
+    // Whenever possible, `transaction` should pull its value from the
+    // `name` property nested in transaction_object or span.
+    sentry_transaction_t *transaction_object;
+    sentry_span_t *span;
 } sentry_scope_t;
 
 /**
@@ -63,7 +68,7 @@ void sentry__scope_cleanup(void);
  * This function must be called while holding the scope lock, and it will be
  * unlocked internally.
  */
-void sentry__scope_flush_unlock();
+void sentry__scope_flush_unlock(void);
 
 /**
  * This will merge the requested data which is in the given `scope` to the given
@@ -74,12 +79,6 @@ void sentry__scope_flush_unlock();
 void sentry__scope_apply_to_event(const sentry_scope_t *scope,
     const sentry_options_t *options, sentry_value_t event,
     sentry_scope_mode_t mode);
-
-/**
- * Sets the span (actually transaction) on the scope. An internal way to pass
- * around contextual information needed from a transaction into other events.
- */
-void sentry__scope_set_span(sentry_value_t span);
 
 /**
  * These are convenience macros to automatically lock/unlock a scope inside a
@@ -95,4 +94,9 @@ void sentry__scope_set_span(sentry_value_t span);
     for (sentry_scope_t *Scope = sentry__scope_lock(); Scope;                  \
          sentry__scope_unlock(), Scope = NULL)
 
+#endif
+
+// this is only used in unit tests
+#ifdef SENTRY_UNITTEST
+sentry_value_t sentry__scope_get_span_or_transaction(void);
 #endif

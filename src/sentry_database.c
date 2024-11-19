@@ -4,6 +4,7 @@
 #include "sentry_json.h"
 #include "sentry_options.h"
 #include "sentry_session.h"
+#include <errno.h>
 #include <string.h>
 
 sentry_run_t *
@@ -49,13 +50,20 @@ sentry__run_new(const sentry_path_t *database_path)
     run->run_path = run_path;
     run->session_path = session_path;
     run->lock = sentry__filelock_new(lock_path);
-    if (!run->lock || !sentry__filelock_try_lock(run->lock)) {
-        sentry__run_free(run);
-        return NULL;
+    if (!run->lock) {
+        goto error;
     }
-
+    if (!sentry__filelock_try_lock(run->lock)) {
+        SENTRY_WARNF("failed to lock file \"%s\" (%s)", lock_path->path,
+            strerror(errno));
+        goto error;
+    }
     sentry__path_create_dir_all(run->run_path);
     return run;
+
+error:
+    sentry__run_free(run);
+    return NULL;
 }
 
 void
@@ -108,7 +116,7 @@ bool
 sentry__run_write_session(
     const sentry_run_t *run, const sentry_session_t *session)
 {
-    sentry_jsonwriter_t *jw = sentry__jsonwriter_new(NULL);
+    sentry_jsonwriter_t *jw = sentry__jsonwriter_new_sb(NULL);
     if (!jw) {
         return false;
     }
@@ -195,10 +203,10 @@ sentry__process_old_runs(const sentry_options_t *options, uint64_t last_crash)
                     // time.
                     if (session->status == SENTRY_SESSION_STATUS_OK) {
                         bool was_crash
-                            = last_crash && last_crash > session->started_ms;
+                            = last_crash && last_crash > session->started_us;
                         if (was_crash) {
-                            session->duration_ms
-                                = last_crash - session->started_ms;
+                            session->duration_us
+                                = last_crash - session->started_us;
                             session->errors += 1;
                             // we only set at most one unclosed session as
                             // crashed
@@ -235,16 +243,18 @@ sentry__process_old_runs(const sentry_options_t *options, uint64_t last_crash)
     sentry__capture_envelope(options->transport, session_envelope);
 }
 
+static const char *g_last_crash_filename = "last_crash";
+
 bool
 sentry__write_crash_marker(const sentry_options_t *options)
 {
-    char *iso_time = sentry__msec_time_to_iso8601(sentry__msec_time());
+    char *iso_time = sentry__usec_time_to_iso8601(sentry__usec_time());
     if (!iso_time) {
         return false;
     }
 
     sentry_path_t *marker_path
-        = sentry__path_join_str(options->database_path, "last_crash");
+        = sentry__path_join_str(options->database_path, g_last_crash_filename);
     if (!marker_path) {
         sentry_free(iso_time);
         return false;
@@ -257,6 +267,37 @@ sentry__write_crash_marker(const sentry_options_t *options)
 
     if (rv) {
         SENTRY_DEBUG("writing crash timestamp to file failed");
+    }
+    return !rv;
+}
+
+bool
+sentry__has_crash_marker(const sentry_options_t *options)
+{
+    sentry_path_t *marker_path
+        = sentry__path_join_str(options->database_path, g_last_crash_filename);
+    if (!marker_path) {
+        return false;
+    }
+
+    bool result = sentry__path_is_file(marker_path);
+    sentry__path_free(marker_path);
+    return result;
+}
+
+bool
+sentry__clear_crash_marker(const sentry_options_t *options)
+{
+    sentry_path_t *marker_path
+        = sentry__path_join_str(options->database_path, g_last_crash_filename);
+    if (!marker_path) {
+        return false;
+    }
+
+    int rv = sentry__path_remove(marker_path);
+    sentry__path_free(marker_path);
+    if (rv) {
+        SENTRY_DEBUG("removing the crash timestamp file has failed");
     }
     return !rv;
 }

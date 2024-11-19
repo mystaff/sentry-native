@@ -1,17 +1,25 @@
-import datetime
 import email
 import gzip
-import sys
 import platform
 import re
+import sys
+from dataclasses import dataclass
+from datetime import datetime, UTC
+
+import msgpack
+
 from .conditions import is_android
 
-
-VERSION_RE = re.compile(r"(\d+\.\d+\.\d+)(?:[-\.]?)(.*)")
+VERSION_RE = re.compile(r"(\d+\.\d+\.\d+)[-.]?(.*)")
 
 
 def matches(actual, expected):
     return {k: v for (k, v) in actual.items() if k in expected.keys()} == expected
+
+
+def assert_matches(actual, expected):
+    """Assert two objects for equality, ignoring extra keys in ``actual``."""
+    assert {k: v for (k, v) in actual.items() if k in expected.keys()} == expected
 
 
 def assert_session(envelope, extra_assertion=None):
@@ -27,31 +35,71 @@ def assert_session(envelope, extra_assertion=None):
         "environment": "development",
     }
     if extra_assertion:
-        assert matches(session, extra_assertion)
+        assert_matches(session, extra_assertion)
 
 
-def assert_meta(envelope, release="test-example-release", integration=None):
+def assert_user_feedback(envelope):
+    user_feedback = None
+    for item in envelope:
+        if item.headers.get("type") == "user_report" and item.payload.json is not None:
+            user_feedback = item.payload.json
+
+    assert user_feedback is not None
+    assert user_feedback["name"] == "some-name"
+    assert user_feedback["email"] == "some-email"
+    assert user_feedback["comments"] == "some-comment"
+
+
+def assert_meta(
+    envelope,
+    release="test-example-release",
+    integration=None,
+    transaction="test-transaction",
+    transaction_data=None,
+    sdk_override=None,
+):
     event = envelope.get_event()
+    assert_event_meta(
+        event, release, integration, transaction, transaction_data, sdk_override
+    )
+
+
+def assert_event_meta(
+    event,
+    release="test-example-release",
+    integration=None,
+    transaction="test-transaction",
+    transaction_data=None,
+    sdk_override=None,
+):
+    extra = {
+        "extra stuff": "some value",
+        "…unicode key…": "őá…–🤮🚀¿ 한글 테스트",
+    }
+    if transaction_data:
+        extra.update(transaction_data)
 
     expected = {
         "platform": "native",
         "environment": "development",
         "release": release,
         "user": {"id": 42, "username": "some_name"},
-        "transaction": "test-transaction",
+        "transaction": transaction,
         "tags": {"expected-tag": "some value"},
-        "extra": {"extra stuff": "some value", "…unicode key…": "őá…–🤮🚀¿ 한글 테스트"},
+        "extra": extra,
     }
     expected_sdk = {
         "name": "sentry.native",
-        "version": "0.4.13",
+        "version": "0.7.12",
         "packages": [
-            {"name": "github:getsentry/sentry-native", "version": "0.4.13"},
+            {"name": "github:getsentry/sentry-native", "version": "0.7.12"},
         ],
     }
-    if not is_android:
+    if is_android:
+        expected_sdk["name"] = "sentry.native.android"
+    else:
         if sys.platform == "win32":
-            assert matches(
+            assert_matches(
                 event["contexts"]["os"],
                 {"name": "Windows", "version": platform.version()},
             )
@@ -62,7 +110,7 @@ def assert_meta(envelope, release="test-example-release", integration=None):
             version = match.group(1)
             build = match.group(2)
 
-            assert matches(
+            assert_matches(
                 event["contexts"]["os"],
                 {"name": "Linux", "version": version, "build": build},
             )
@@ -72,7 +120,7 @@ def assert_meta(envelope, release="test-example-release", integration=None):
                 version.append("0")
             version = ".".join(version)
 
-            assert matches(
+            assert_matches(
                 event["contexts"]["os"],
                 {
                     "name": "macOS",
@@ -82,9 +130,12 @@ def assert_meta(envelope, release="test-example-release", integration=None):
             )
             assert event["contexts"]["os"]["build"] is not None
 
-    assert matches(event, expected)
-    assert matches(event["sdk"], expected_sdk)
-    assert matches(
+    if sdk_override is not None:
+        expected_sdk["name"] = sdk_override
+
+    assert_matches(event, expected)
+    assert_matches(event["sdk"], expected_sdk)
+    assert_matches(
         event["contexts"], {"runtime": {"type": "runtime", "name": "testing-runtime"}}
     )
 
@@ -92,10 +143,11 @@ def assert_meta(envelope, release="test-example-release", integration=None):
         assert event["sdk"].get("integrations") is None
     else:
         assert event["sdk"]["integrations"] == [integration]
-    assert any(
-        "sentry_example" in image["code_file"]
-        for image in event["debug_meta"]["images"]
-    )
+    if event.get("type") == "event":
+        assert any(
+            "sentry_example" in image["code_file"]
+            for image in event["debug_meta"]["images"]
+        )
 
 
 def assert_stacktrace(envelope, inside_exception=False, check_size=True):
@@ -114,16 +166,25 @@ def assert_stacktrace(envelope, inside_exception=False, check_size=True):
         )
 
 
-def assert_breadcrumb(envelope):
-    event = envelope.get_event()
-
+def assert_breadcrumb_inner(breadcrumbs):
     expected = {
         "type": "http",
         "message": "debug crumb",
         "category": "example!",
         "level": "debug",
+        "data": {
+            "url": "https://example.com/api/1.0/users",
+            "method": "GET",
+            "status_code": 200,
+            "reason": "OK",
+        },
     }
-    assert any(matches(b, expected) for b in event["breadcrumbs"])
+    assert any(matches(b, expected) for b in breadcrumbs)
+
+
+def assert_breadcrumb(envelope):
+    event = envelope.get_event()
+    assert_breadcrumb_inner(event["breadcrumbs"])
 
 
 def assert_attachment(envelope):
@@ -144,19 +205,27 @@ def assert_minidump(envelope):
     assert minidump.payload.bytes.startswith(b"MDMP")
 
 
-def assert_timestamp(ts, now=datetime.datetime.utcnow()):
+def assert_timestamp(ts, now=datetime.now(UTC)):
     assert ts[:11] == now.isoformat()[:11]
 
 
-def assert_event(envelope):
+def assert_event(envelope, message="Hello World!"):
     event = envelope.get_event()
     expected = {
         "level": "info",
         "logger": "my-logger",
-        "message": {"formatted": "Hello World!"},
+        "message": {"formatted": message},
     }
-    assert matches(event, expected)
+    assert_matches(event, expected)
     assert_timestamp(event["timestamp"])
+
+
+def assert_breakpad_crash(envelope):
+    event = envelope.get_event()
+    expected = {
+        "level": "fatal",
+    }
+    assert_matches(event, expected)
 
 
 def assert_exception(envelope):
@@ -165,31 +234,111 @@ def assert_exception(envelope):
         "type": "ParseIntError",
         "value": "invalid digit found in string",
     }
-    assert matches(event["exception"]["values"][0], exception)
+    assert_matches(event["exception"]["values"][0], exception)
     assert_timestamp(event["timestamp"])
 
 
-def assert_crash(envelope):
+def assert_inproc_crash(envelope):
     event = envelope.get_event()
-    assert matches(event, {"level": "fatal"})
+    assert_matches(event, {"level": "fatal"})
     # depending on the unwinder, we currently don’t get any stack frames from
     # a `ucontext`
     assert_stacktrace(envelope, inside_exception=True, check_size=False)
 
 
+def assert_crash_timestamp(has_files, tmp_path):
+    # The crash file should survive a `sentry_init` and should still be there
+    # even after restarts.
+    if has_files:
+        with open("{}/.sentry-native/last_crash".format(tmp_path)) as f:
+            crash_timestamp = f.read()
+        assert_timestamp(crash_timestamp)
+
+
+def assert_before_send(envelope):
+    event = envelope.get_event()
+    assert_matches(event, {"adapted_by": "before_send"})
+
+
+def assert_no_before_send(envelope):
+    event = envelope.get_event()
+    assert ("adapted_by", "before_send") not in event.items()
+
+
+@dataclass(frozen=True)
+class CrashpadAttachments:
+    event: dict
+    breadcrumb1: list
+    breadcrumb2: list
+
+
+def _unpack_breadcrumbs(payload):
+    unpacker = msgpack.Unpacker()
+    unpacker.feed(payload)
+    return [unpacked for unpacked in unpacker]
+
+
+def _load_crashpad_attachments(msg):
+    event = {}
+    breadcrumb1 = []
+    breadcrumb2 = []
+    for part in msg.walk():
+        if part.get_filename() is not None:
+            assert part.get("Content-Type") is None
+
+        match part.get_filename():
+            case "__sentry-event":
+                event = msgpack.unpackb(part.get_payload(decode=True))
+            case "__sentry-breadcrumb1":
+                breadcrumb1 = _unpack_breadcrumbs(part.get_payload(decode=True))
+            case "__sentry-breadcrumb2":
+                breadcrumb2 = _unpack_breadcrumbs(part.get_payload(decode=True))
+
+    return CrashpadAttachments(event, breadcrumb1, breadcrumb2)
+
+
+def is_valid_timestamp(timestamp):
+    try:
+        datetime.fromisoformat(timestamp)
+        return True
+    except ValueError:
+        return False
+
+
+def _validate_breadcrumb_seq(seq, breadcrumb_func):
+    for i in seq:
+        breadcrumb = breadcrumb_func(i)
+        assert breadcrumb["message"] == str(i)
+        assert is_valid_timestamp(breadcrumb["timestamp"])
+
+
+def assert_overflowing_breadcrumb(attachments):
+    if len(attachments.breadcrumb1) > 3:
+        _validate_breadcrumb_seq(range(97), lambda i: attachments.breadcrumb1[3 + i])
+        _validate_breadcrumb_seq(
+            range(97, 101), lambda i: attachments.breadcrumb2[i - 97]
+        )
+    else:
+        assert_breadcrumb_inner(attachments.breadcrumb1)
+
+
 def assert_crashpad_upload(req):
     multipart = gzip.decompress(req.get_data())
     msg = email.message_from_bytes(bytes(str(req.headers), encoding="utf8") + multipart)
-    files = [part.get_filename() for part in msg.walk()]
+    attachments = _load_crashpad_attachments(msg)
 
-    # TODO:
-    # Actually assert that we get a correct event/breadcrumbs payload
-    assert "__sentry-breadcrumb1" in files
-    assert "__sentry-breadcrumb2" in files
-    assert "__sentry-event" in files
-
+    assert_overflowing_breadcrumb(attachments)
+    assert_event_meta(attachments.event, integration="crashpad")
     assert any(
         b'name="upload_file_minidump"' in part.as_bytes()
         and b"\n\nMDMP" in part.as_bytes()
         for part in msg.walk()
     )
+
+
+def assert_gzip_file_header(output):
+    assert output[:3] == b"\x1f\x8b\x08"
+
+
+def assert_gzip_content_encoding(req):
+    assert req.content_encoding == "gzip"
