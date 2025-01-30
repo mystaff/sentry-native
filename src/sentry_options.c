@@ -85,6 +85,9 @@ sentry_options_free(sentry_options_t *opts)
     }
     sentry__dsn_decref(opts->dsn);
     sentry_free(opts->release);
+#ifdef SENTRY_PLATFORM_WINDOWS
+    sentry_free(opts->relaunch_argvw);
+#endif
     sentry_free(opts->relaunch_argv);
     sentry_free(opts->sdk_name);
     sentry_free(opts->user_agent);
@@ -553,17 +556,17 @@ sentry_options_set_database_pathw(sentry_options_t *opts, const wchar_t *path)
 
 void
 sentry_options_set_relaunch_argvw(
-    sentry_options_t *opts, const wchar_t *relaunch_argv)
+    sentry_options_t *opts, const wchar_t *relaunch_argvw)
 {
-    sentry_free(opts->relaunch_argv);
-    size_t len = relaunch_argv ? wcslen(relaunch_argv) : 0;
-    opts->relaunch_argv = sentry__path_from_wstr_n(relaunch_argv, len);
+    sentry_free(opts->relaunch_argvw);
+    size_t len = relaunch_argvw ? wcslen(relaunch_argvw) : 0;
+    opts->relaunch_argvw = sentry__path_from_wstr_n(relaunch_argvw, len);
 }
 
 const wchar_t *
 sentry_options_get_relaunch_argvw(const sentry_options_t *opts)
 {
-    return opts->relaunch_argv;
+    return opts->relaunch_argvw;
 }
 #endif
 

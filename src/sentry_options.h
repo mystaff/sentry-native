@@ -39,10 +39,9 @@ typedef struct sentry_options_s {
     char *ca_certs;
     char *transport_thread_name;
 #ifdef SENTRY_PLATFORM_WINDOWS
-    wchar_t *relaunch_argv;
-#else
-    char *relaunch_argv;
+    wchar_t *relaunch_argvw;
 #endif
+    char *relaunch_argv;
     char *sdk_name;
     char *user_agent;
     sentry_path_t *database_path;
