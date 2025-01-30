@@ -424,7 +424,7 @@ crashpad_backend_startup(
         annotations["__td-crashed-pid"] = std::to_string(td__getpid());
 #ifdef SENTRY_PLATFORM_WINDOWS
         annotations["__td-relaunch-argv"]
-            = std::string { sentry__string_from_wstr(options->relaunch_argv) };
+            = std::string { sentry__string_from_wstr(options->relaunch_argvw) };
         annotations["__td-relaunch-path"]
             = std::string { sentry__string_from_wstr(current_exe->path) };
 #else
