@@ -550,6 +550,21 @@ sentry_options_set_database_pathw(sentry_options_t *opts, const wchar_t *path)
     size_t path_len = path ? wcslen(path) : 0;
     sentry_options_set_database_pathw_n(opts, path, path_len);
 }
+
+void
+sentry_options_set_relaunch_argvw(
+    sentry_options_t *opts, const wchar_t *relaunch_argv)
+{
+    sentry_free(opts->relaunch_argv);
+    size_t len = relaunch_argv ? wcslen(relaunch_argv) : 0;
+    opts->relaunch_argv = sentry__path_from_wstr_n(relaunch_argv, len);
+}
+
+const wchar_t *
+sentry_options_get_relaunch_argvw(const sentry_options_t *opts)
+{
+    return opts->relaunch_argv;
+}
 #endif
 
 /**
