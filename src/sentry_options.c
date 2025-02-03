@@ -560,7 +560,8 @@ sentry_options_set_relaunch_argvw(
 {
     sentry_free(opts->relaunch_argvw);
     size_t len = relaunch_argvw ? wcslen(relaunch_argvw) : 0;
-    opts->relaunch_argvw = sentry__path_from_wstr_n(relaunch_argvw, len);
+    const auto clonedPath = sentry__path_from_wstr_n(relaunch_argvw, len);
+    opts->relaunch_argvw = clonedPath->path;
 }
 
 const wchar_t *
