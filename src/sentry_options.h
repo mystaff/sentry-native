@@ -38,6 +38,9 @@ typedef struct sentry_options_s {
     char *http_proxy;
     char *ca_certs;
     char *transport_thread_name;
+#ifdef SENTRY_PLATFORM_WINDOWS
+    wchar_t *relaunch_argvw;
+#endif
     char *relaunch_argv;
     char *sdk_name;
     char *user_agent;

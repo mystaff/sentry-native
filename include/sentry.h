@@ -1288,6 +1288,19 @@ SENTRY_API void sentry_options_set_database_pathw(
     sentry_options_t *opts, const wchar_t *path);
 SENTRY_API void sentry_options_set_database_pathw_n(
     sentry_options_t *opts, const wchar_t *path, size_t path_len);
+
+/**
+ * Sets the args passed to the process when relaunching after a crash.
+ * Args must be in 1 single string separated by |
+ */
+SENTRY_API void sentry_options_set_relaunch_argvw(
+    sentry_options_t *opts, const wchar_t *relaunch_argv);
+
+/**
+ * Gets the args passsed to the process when relaunching after a crash.
+ */
+SENTRY_API const wchar_t *sentry_options_get_relaunch_argvw(
+    const sentry_options_t *opts);
 #endif
 
 /**
